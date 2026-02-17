@@ -11,37 +11,95 @@
         }
 
         body {
-            width: 300px;
+            width: 380px;
+            max-height: 520px;
             font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
             background: #1a1a2e;
             color: #e0e0e0;
-            padding: 20px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
         }
 
-        h2 {
-            font-size: 16px;
-            font-weight: 600;
-            margin-bottom: 16px;
-            color: #fff;
+        /* ── Header ── */
+        .header {
             display: flex;
             align-items: center;
             gap: 8px;
+            padding: 14px 16px 10px;
         }
 
-        h2 svg {
+        .header svg {
             flex-shrink: 0;
         }
 
-        label {
-            display: block;
-            font-size: 12px;
-            color: #aaa;
-            margin-bottom: 6px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
+        .header h1 {
+            font-size: 15px;
+            font-weight: 600;
+            color: #fff;
         }
 
-        select {
+        /* ── Tabs ── */
+        .tabs {
+            display: flex;
+            border-bottom: 1px solid #2a2a4a;
+            padding: 0 16px;
+        }
+
+        .tab {
+            flex: 1;
+            padding: 10px 0;
+            text-align: center;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: .5px;
+            color: #666;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            transition: color .15s, border-color .15s;
+            background: none;
+            border-top: none;
+            border-left: none;
+            border-right: none;
+        }
+
+        .tab:hover {
+            color: #aaa;
+        }
+
+        .tab.active {
+            color: #4a6cf7;
+            border-bottom-color: #4a6cf7;
+        }
+
+        /* ── Tab content ── */
+        .tab-content {
+            display: none;
+            flex-direction: column;
+            overflow: hidden;
+            flex: 1;
+        }
+
+        .tab-content.active {
+            display: flex;
+        }
+
+        /* ── Settings panel ── */
+        .settings {
+            padding: 16px;
+        }
+
+        .settings label {
+            display: block;
+            font-size: 11px;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: .5px;
+            margin-bottom: 6px;
+        }
+
+        .settings select {
             width: 100%;
             padding: 10px 12px;
             border: 1px solid #333;
@@ -57,40 +115,229 @@
             background-position: right 12px center;
         }
 
-        select:hover {
+        .settings select:hover {
             border-color: #4a6cf7;
         }
 
-        select:focus {
+        .settings select:focus {
             border-color: #4a6cf7;
             box-shadow: 0 0 0 2px rgba(74, 108, 247, 0.25);
         }
 
-        .saved {
-            margin-top: 12px;
+        .saved-msg {
+            margin-top: 10px;
             font-size: 12px;
             color: #4ecdc4;
             opacity: 0;
             transition: opacity .3s;
         }
 
-        .saved.show {
+        .saved-msg.show {
             opacity: 1;
         }
 
-        .footer {
-            margin-top: 18px;
-            padding-top: 12px;
-            border-top: 1px solid #2a2a4a;
+        .tip {
+            margin-top: 16px;
+            padding: 10px 12px;
+            background: rgba(74, 108, 247, 0.08);
+            border-radius: 8px;
             font-size: 11px;
-            color: #666;
+            color: #888;
+            line-height: 1.5;
+        }
+
+        /* ── Words panel ── */
+        .words-panel {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        /* Filters */
+        .filters {
+            display: flex;
+            gap: 6px;
+            padding: 12px 16px 8px;
+            flex-wrap: wrap;
+        }
+
+        .filter-btn {
+            padding: 5px 10px;
+            font-size: 11px;
+            font-weight: 600;
+            border-radius: 14px;
+            border: 1px solid #333;
+            background: transparent;
+            color: #888;
+            cursor: pointer;
+            transition: all .15s;
+        }
+
+        .filter-btn:hover {
+            border-color: #4a6cf7;
+            color: #ccc;
+        }
+
+        .filter-btn.active {
+            background: #4a6cf7;
+            border-color: #4a6cf7;
+            color: #fff;
+        }
+
+        /* Stats */
+        .stats {
+            padding: 4px 16px 8px;
+            font-size: 11px;
+            color: #555;
+        }
+
+        /* Word list */
+        .word-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 0 16px 8px;
+            scrollbar-width: thin;
+            scrollbar-color: #333 transparent;
+        }
+
+        .word-list::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .word-list::-webkit-scrollbar-thumb {
+            background: #333;
+            border-radius: 2px;
+        }
+
+        .word-item {
+            padding: 8px 10px;
+            margin-bottom: 6px;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 8px;
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+        }
+
+        .word-item .wi-texts {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .word-item .wi-original {
+            font-size: 13px;
+            color: rgba(255, 255, 255, 0.65);
+            word-break: break-word;
+        }
+
+        .word-item .wi-translated {
+            font-size: 13px;
+            font-weight: 500;
+            color: #4ecdc4;
+            word-break: break-word;
+            margin-top: 2px;
+        }
+
+        .word-item .wi-meta {
+            font-size: 10px;
+            color: #555;
+            margin-top: 3px;
+        }
+
+        .word-item .wi-delete {
+            flex-shrink: 0;
+            background: none;
+            border: none;
+            color: #555;
+            cursor: pointer;
+            padding: 2px;
+            font-size: 14px;
+            line-height: 1;
+            transition: color .15s;
+        }
+
+        .word-item .wi-delete:hover {
+            color: #ff6b6b;
+        }
+
+        .word-item.new-item {
+            border-left: 2px solid #4a6cf7;
+        }
+
+        .empty-state {
             text-align: center;
+            padding: 40px 16px;
+            color: #555;
+            font-size: 13px;
+        }
+
+        .empty-state svg {
+            margin-bottom: 10px;
+            opacity: .3;
+        }
+
+        /* Export section */
+        .export-section {
+            padding: 10px 16px 14px;
+            border-top: 1px solid #2a2a4a;
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .export-btn {
+            flex: 1;
+            min-width: 80px;
+            padding: 8px 12px;
+            font-size: 11px;
+            font-weight: 600;
+            border-radius: 6px;
+            border: none;
+            cursor: pointer;
+            transition: all .15s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 5px;
+        }
+
+        .export-anki {
+            background: #2d5016;
+            color: #8bc34a;
+        }
+
+        .export-anki:hover {
+            background: #3a6b1c;
+        }
+
+        .export-csv {
+            background: #16213e;
+            color: #4a9af5;
+        }
+
+        .export-csv:hover {
+            background: #1d2d52;
+        }
+
+        .export-clear {
+            background: rgba(255, 107, 107, 0.1);
+            color: #ff6b6b;
+            flex: 0;
+            padding: 8px 10px;
+        }
+
+        .export-clear:hover {
+            background: rgba(255, 107, 107, 0.2);
         }
     </style>
 </head>
 
 <body>
-    <h2>
+    <!-- Header -->
+    <div class="header">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#4a6cf7" stroke-width="2"
             stroke-linecap="round" stroke-linejoin="round">
             <path d="M5 8l6 6" />
@@ -100,34 +347,76 @@
             <path d="M22 22l-5-10-5 10" />
             <path d="M14 18h6" />
         </svg>
-        Quick Translator
-    </h2>
+        <h1>Quick Translator</h1>
+    </div>
 
-    <label for="targetLang">Język docelowy</label>
-    <select id="targetLang">
-        <option value="pl">🇵🇱 Polski</option>
-        <option value="en">🇬🇧 English</option>
-        <option value="de">🇩🇪 Deutsch</option>
-        <option value="fr">🇫🇷 Français</option>
-        <option value="es">🇪🇸 Español</option>
-        <option value="it">🇮🇹 Italiano</option>
-        <option value="pt">🇵🇹 Português</option>
-        <option value="uk">🇺🇦 Українська</option>
-        <option value="ru">🇷🇺 Русский</option>
-        <option value="cs">🇨🇿 Čeština</option>
-        <option value="nl">🇳🇱 Nederlands</option>
-        <option value="sv">🇸🇪 Svenska</option>
-        <option value="ja">🇯🇵 日本語</option>
-        <option value="ko">🇰🇷 한국어</option>
-        <option value="zh">🇨🇳 中文</option>
-        <option value="ar">🇸🇦 العربية</option>
-        <option value="hi">🇮🇳 हिन्दी</option>
-        <option value="tr">🇹🇷 Türkçe</option>
-    </select>
+    <!-- Tabs -->
+    <div class="tabs">
+        <button class="tab active" data-tab="settings">⚙ Ustawienia</button>
+        <button class="tab" data-tab="words">📚 Zapisane słowa</button>
+    </div>
 
-    <div class="saved" id="saved">✓ Zapisano</div>
+    <!-- Settings Tab -->
+    <div class="tab-content active" id="tab-settings">
+        <div class="settings">
+            <label for="targetLang">Język docelowy</label>
+            <select id="targetLang">
+                <option value="pl">🇵🇱 Polski</option>
+                <option value="en">🇬🇧 English</option>
+                <option value="de">🇩🇪 Deutsch</option>
+                <option value="fr">🇫🇷 Français</option>
+                <option value="es">🇪🇸 Español</option>
+                <option value="it">🇮🇹 Italiano</option>
+                <option value="pt">🇵🇹 Português</option>
+                <option value="uk">🇺🇦 Українська</option>
+                <option value="ru">🇷🇺 Русский</option>
+                <option value="cs">🇨🇿 Čeština</option>
+                <option value="nl">🇳🇱 Nederlands</option>
+                <option value="sv">🇸🇪 Svenska</option>
+                <option value="ja">🇯🇵 日本語</option>
+                <option value="ko">🇰🇷 한국어</option>
+                <option value="zh">🇨🇳 中文</option>
+                <option value="ar">🇸🇦 العربية</option>
+                <option value="hi">🇮🇳 हिन्दी</option>
+                <option value="tr">🇹🇷 Türkçe</option>
+            </select>
+            <div class="saved-msg" id="saved">✓ Zapisano</div>
+            <div class="tip">
+                💡 Zaznacz tekst na stronie → kliknij ikonę tłumaczenia → kliknij 🔖 aby zapisać słowo do kolekcji.
+            </div>
+        </div>
+    </div>
 
-    <div class="footer">Zaznacz tekst na stronie → kliknij ikonę tłumaczenia</div>
+    <!-- Words Tab -->
+    <div class="tab-content" id="tab-words">
+        <div class="words-panel">
+            <!-- Filters -->
+            <div class="filters">
+                <button class="filter-btn active" data-filter="all">Wszystkie</button>
+                <button class="filter-btn" data-filter="today">Dziś</button>
+                <button class="filter-btn" data-filter="week">Tydzień</button>
+                <button class="filter-btn" data-filter="month">Miesiąc</button>
+                <button class="filter-btn" data-filter="new">🆕 Niepobrane</button>
+            </div>
+            <div class="stats" id="stats"></div>
+
+            <!-- Word list -->
+            <div class="word-list" id="wordList"></div>
+
+            <!-- Export -->
+            <div class="export-section">
+                <button class="export-btn export-anki" id="exportAnki" title="Eksportuj do pliku Anki (.txt)">
+                    📋 Anki
+                </button>
+                <button class="export-btn export-csv" id="exportCsv" title="Eksportuj do Excel (.csv)">
+                    📊 Excel CSV
+                </button>
+                <button class="export-btn export-clear" id="clearAll" title="Usuń widoczne słowa">
+                    🗑
+                </button>
+            </div>
+        </div>
+    </div>
 
     <script src="popup.js"></script>
 </body>

@@ -16,6 +16,9 @@
 
     const SVG_SPEAKER = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>`;
 
+    const SVG_SAVE = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>`;
+    const SVG_SAVE_CHECK = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="#4ecdc4" stroke="#4ecdc4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>`;
+
     // ── CSS injection ──────────────────────────────────────────────
     const style = document.createElement("style");
     style.textContent = `
@@ -125,6 +128,30 @@
     }
     @keyframes ${PREFIX}spin {
       to { transform: rotate(360deg); }
+    }
+
+    /* ── Save button ── */
+    .${PREFIX}save-btn {
+      display: flex; align-items: center; gap: 6px;
+      margin-top: 8px; padding: 6px 12px;
+      background: rgba(255,255,255,0.07);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 6px;
+      color: rgba(255,255,255,0.6);
+      font-size: 12px; cursor: pointer;
+      transition: all .15s ease;
+      width: 100%;
+      justify-content: center;
+    }
+    .${PREFIX}save-btn:hover {
+      background: rgba(255,255,255,0.12);
+      color: #fff;
+      border-color: rgba(255,255,255,0.2);
+    }
+    .${PREFIX}save-btn.saved {
+      color: #4ecdc4;
+      border-color: rgba(78,205,196,0.3);
+      background: rgba(78,205,196,0.08);
     }
   `;
     document.head.appendChild(style);
@@ -324,7 +351,7 @@
                 </div>
                 <div class="${PREFIX}body">
                     <div class="${PREFIX}row">
-                        <span class="${PREFIX}label">SRC</span>
+                        <span class="${PREFIX}label">${langTag(srcLang)}</span>
                         <span class="${PREFIX}text ${PREFIX}original">${escapeHtml(text)}</span>
                         <button class="${PREFIX}speak" data-text="${escapeAttr(text)}" data-lang="${escapeAttr(srcLang)}" title="Odczytaj oryginał">${SVG_SPEAKER}</button>
                     </div>
@@ -333,6 +360,9 @@
                         <span class="${PREFIX}text ${PREFIX}translated">${escapeHtml(translated)}</span>
                         <button class="${PREFIX}speak" data-text="${escapeAttr(translated)}" data-lang="${escapeAttr(targetLang)}" title="Odczytaj tłumaczenie">${SVG_SPEAKER}</button>
                     </div>
+                    <button class="${PREFIX}save-btn" data-src="${escapeAttr(text)}" data-translated="${escapeAttr(translated)}" data-src-lang="${escapeAttr(srcLang)}" data-tgt-lang="${escapeAttr(targetLang)}" title="Zapisz do kolekcji">
+                        ${SVG_SAVE} <span>Zapisz</span>
+                    </button>
                 </div>`;
 
             showTooltip(html, rect);
@@ -349,6 +379,25 @@
                     utter.onerror = () => btn.classList.remove("speaking");
                 });
             });
+
+            // Attach save handler
+            const saveBtn = tooltipEl.querySelector(`.${PREFIX}save-btn`);
+            if (saveBtn) {
+                saveBtn.addEventListener("click", (ev) => {
+                    ev.stopPropagation();
+                    saveWord({
+                        original: saveBtn.getAttribute("data-src"),
+                        translated: saveBtn.getAttribute("data-translated"),
+                        srcLang: saveBtn.getAttribute("data-src-lang"),
+                        tgtLang: saveBtn.getAttribute("data-tgt-lang"),
+                        url: window.location.href,
+                        timestamp: Date.now(),
+                        downloaded: false,
+                    });
+                    saveBtn.innerHTML = `${SVG_SAVE_CHECK} <span>Zapisano!</span>`;
+                    saveBtn.classList.add("saved");
+                });
+            }
         } catch (err) {
             console.error("[Quick Translator]", err);
             showTooltip(
@@ -395,6 +444,24 @@
     document.addEventListener("keydown", (e) => {
         if (e.key === "Escape") hideAll();
     });
+
+    // ── Save word to storage ───────────────────────────────────────
+    function saveWord(entry) {
+        if (!chrome?.storage?.local) return;
+        chrome.storage.local.get({ savedWords: [] }, (data) => {
+            const words = data.savedWords || [];
+            // Avoid exact duplicates (same original + translated)
+            const exists = words.some(
+                (w) =>
+                    w.original === entry.original &&
+                    w.translated === entry.translated,
+            );
+            if (!exists) {
+                words.push(entry);
+                chrome.storage.local.set({ savedWords: words });
+            }
+        });
+    }
 
     // ── Utils ──────────────────────────────────────────────────────
     function escapeHtml(str) {
