@@ -19,6 +19,9 @@
     const SVG_SAVE = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>`;
     const SVG_SAVE_CHECK = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="#4ecdc4" stroke="#4ecdc4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>`;
 
+    const SVG_SAVE_SENTENCE = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>`;
+    const SVG_SAVE_SENTENCE_CHECK = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="#4ecdc4" stroke="#4ecdc4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>`;
+
     const SVG_READ = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>`;
 
     // ── CSS injection ──────────────────────────────────────────────
@@ -203,6 +206,26 @@
       transform: scale(1.1);
     }
     .${PREFIX}save-btn.saved {
+      color: #4ecdc4;
+      border-color: rgba(78,205,196,0.3);
+      background: rgba(78,205,196,0.1);
+    }
+    .${PREFIX}save-sentence-btn {
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08);
+      color: rgba(255,255,255,0.35);
+      cursor: pointer; padding: 4px; border-radius: 8px;
+      transition: all .2s ease;
+      flex-shrink: 0;
+      margin-left: 4px;
+    }
+    .${PREFIX}save-sentence-btn:hover {
+      color: #fff;
+      background: rgba(255,255,255,0.1);
+      border-color: rgba(255,255,255,0.15);
+      transform: scale(1.1);
+    }
+    .${PREFIX}save-sentence-btn.saved {
       color: #4ecdc4;
       border-color: rgba(78,205,196,0.3);
       background: rgba(78,205,196,0.1);
@@ -876,10 +899,8 @@
                         translated: saveBtn.getAttribute("data-translated"),
                         srcLang: saveBtn.getAttribute("data-src-lang"),
                         tgtLang: saveBtn.getAttribute("data-tgt-lang"),
-                        sentence: saveBtn.getAttribute("data-sentence") || "",
-                        sentenceTranslated:
-                            saveBtn.getAttribute("data-sentence-translated") ||
-                            "",
+                        sentence: "",
+                        sentenceTranslated: "",
                         url: window.location.href,
                         timestamp: Date.now(),
                         downloaded: false,
@@ -1127,9 +1148,11 @@
             fullTranslated,
         ) {
             let fullLineHtml = "";
+            const cleanFullLine = fullLine ? stripBrackets(fullLine) : "";
+            const cleanFullTranslated = fullTranslated
+                ? stripBrackets(fullTranslated)
+                : "";
             if (fullLine && fullTranslated) {
-                const cleanFullLine = stripBrackets(fullLine);
-                const cleanFullTranslated = stripBrackets(fullTranslated);
                 if (cleanFullLine) {
                     fullLineHtml = `
                     <div class="${PREFIX}row" style="margin-top:6px; padding-top:8px; border-top:1px solid rgba(255,255,255,0.1);">
@@ -1142,10 +1165,17 @@
                     </div>`;
                 }
             }
+            // Build save-sentence button (only if we have a sentence)
+            const saveSentenceBtn = cleanFullLine
+                ? `<button class="${PREFIX}save-sentence-btn" data-src="${escapeAttr(original)}" data-translated="${escapeAttr(translated)}" data-src-lang="${escapeAttr(srcLang)}" data-tgt-lang="${escapeAttr(targetLang)}" data-sentence="${escapeAttr(cleanFullLine)}" data-sentence-translated="${escapeAttr(cleanFullTranslated)}" title="Zapisz zdanie">${SVG_SAVE_SENTENCE}</button>`
+                : "";
             return `
                 <div class="${PREFIX}header">
                     <span>${langTag(srcLang)} → ${langTag(targetLang)}</span>
-                    <button class="${PREFIX}save-btn" data-src="${escapeAttr(original)}" data-translated="${escapeAttr(translated)}" data-src-lang="${escapeAttr(srcLang)}" data-tgt-lang="${escapeAttr(targetLang)}" title="Zapisz do kolekcji">${SVG_SAVE}</button>
+                    <div style="display:flex;align-items:center;">
+                        <button class="${PREFIX}save-btn" data-src="${escapeAttr(original)}" data-translated="${escapeAttr(translated)}" data-src-lang="${escapeAttr(srcLang)}" data-tgt-lang="${escapeAttr(targetLang)}" title="Zapisz słowo">${SVG_SAVE}</button>
+                        ${saveSentenceBtn}
+                    </div>
                 </div>
                 <div class="${PREFIX}body">
                     <div class="${PREFIX}row">
@@ -1186,16 +1216,41 @@
                         translated: saveBtn.getAttribute("data-translated"),
                         srcLang: saveBtn.getAttribute("data-src-lang"),
                         tgtLang: saveBtn.getAttribute("data-tgt-lang"),
-                        sentence: saveBtn.getAttribute("data-sentence") || "",
-                        sentenceTranslated:
-                            saveBtn.getAttribute("data-sentence-translated") ||
-                            "",
+                        sentence: "",
+                        sentenceTranslated: "",
                         url: window.location.href,
                         timestamp: Date.now(),
                         downloaded: false,
                     });
                     saveBtn.innerHTML = SVG_SAVE_CHECK;
                     saveBtn.classList.add("saved");
+                });
+            }
+            // Save sentence button handler
+            const saveSentenceBtn = tooltipEl.querySelector(
+                `.${PREFIX}save-sentence-btn`,
+            );
+            if (saveSentenceBtn) {
+                saveSentenceBtn.addEventListener("click", (ev) => {
+                    ev.stopPropagation();
+                    saveWord({
+                        original: saveSentenceBtn.getAttribute("data-src"),
+                        translated:
+                            saveSentenceBtn.getAttribute("data-translated"),
+                        srcLang: saveSentenceBtn.getAttribute("data-src-lang"),
+                        tgtLang: saveSentenceBtn.getAttribute("data-tgt-lang"),
+                        sentence:
+                            saveSentenceBtn.getAttribute("data-sentence") || "",
+                        sentenceTranslated:
+                            saveSentenceBtn.getAttribute(
+                                "data-sentence-translated",
+                            ) || "",
+                        url: window.location.href,
+                        timestamp: Date.now(),
+                        downloaded: false,
+                    });
+                    saveSentenceBtn.innerHTML = SVG_SAVE_SENTENCE_CHECK;
+                    saveSentenceBtn.classList.add("saved");
                 });
             }
         }

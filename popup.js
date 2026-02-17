@@ -348,7 +348,8 @@ document.getElementById("exportAnki").addEventListener("click", async () => {
 
         for (let i = 0; i < words.length; i++) {
             const w = words[i];
-            const audioFilename = `audio_${i}.mp3`;
+            const sentenceAudioFile = `sentence_${i}.mp3`;
+            const wordAudioFile = `word_${i}.mp3`;
 
             // Build Cloze text: sentence with the word as {{c1::word::translation}}
             let clozeText;
@@ -372,17 +373,27 @@ document.getElementById("exportAnki").addEventListener("click", async () => {
                 backText += `<br><br><i>${w.sentenceTranslated}</i>`;
             }
 
-            // Anki line: Text<TAB>Extra<TAB>Tags
-            const soundTag = `[sound:${audioFilename}]`;
-            lines.push(`${clozeText} ${soundTag}\t${backText}`);
+            // Two sound tags: sentence audio + word audio
+            const soundTags = `[sound:${sentenceAudioFile}] [sound:${wordAudioFile}]`;
+            lines.push(`${clozeText} ${soundTags}\t${backText}`);
 
-            // Fetch TTS audio for the sentence (or just the word)
-            const ttsText = w.sentence || w.original;
+            // Fetch TTS audio for the full sentence
             const ttsLang = w.srcLang || "en";
-            const audioBlob = await fetchAudioBlob(ttsText, ttsLang);
-            if (audioBlob) {
-                const audioData = new Uint8Array(await audioBlob.arrayBuffer());
-                files.push({ name: audioFilename, data: audioData });
+            if (w.sentence) {
+                const sentenceBlob = await fetchAudioBlob(w.sentence, ttsLang);
+                if (sentenceBlob) {
+                    const audioData = new Uint8Array(
+                        await sentenceBlob.arrayBuffer(),
+                    );
+                    files.push({ name: sentenceAudioFile, data: audioData });
+                }
+            }
+
+            // Fetch TTS audio for just the word
+            const wordBlob = await fetchAudioBlob(w.original, ttsLang);
+            if (wordBlob) {
+                const audioData = new Uint8Array(await wordBlob.arrayBuffer());
+                files.push({ name: wordAudioFile, data: audioData });
             }
         }
 
