@@ -52,7 +52,7 @@
       z-index: 2147483647;
       max-width: 420px; min-width: 200px;
       border-radius: 10px;
-      background: rgba(10, 10, 30, 0.88);
+      background: rgba(10, 10, 30, 0.7);
       backdrop-filter: blur(8px);
       -webkit-backdrop-filter: blur(8px);
       color: #fff;
@@ -396,7 +396,7 @@
 
         // Show loading
         showTooltip(
-            `<div class="${PREFIX}loading"><div class="${PREFIX}spinner"></div> Tłumaczę…</div>`,
+            `<div class="${PREFIX}loading"><div class="${PREFIX}spinner">`,
             rect,
         );
 
