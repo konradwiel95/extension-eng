@@ -26,57 +26,64 @@
     #${ICON_ID} {
       position: absolute;
       z-index: 2147483647;
-      width: 32px; height: 32px;
+      width: 34px; height: 34px;
       display: flex; align-items: center; justify-content: center;
-      border-radius: 50%;
-      background: #4a6cf7;
+      border-radius: 12px;
+      background: rgba(74, 108, 247, 0.85);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
       color: #fff;
       cursor: pointer;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-      opacity: 0; transform: scale(0.7);
-      transition: opacity .15s ease, transform .15s ease;
+      box-shadow: 0 4px 16px rgba(74,108,247,0.35), 0 0 0 1px rgba(255,255,255,0.1) inset;
+      opacity: 0; transform: scale(0.6);
+      transition: opacity .18s ease, transform .18s cubic-bezier(.34,1.56,.64,1);
       pointer-events: auto;
-      border: none; padding: 0;
+      border: 1px solid rgba(255,255,255,0.15);
+      padding: 0;
     }
     #${ICON_ID}.visible {
       opacity: 1; transform: scale(1);
     }
     #${ICON_ID}:hover {
-      background: #3b5de7;
+      background: rgba(59, 93, 231, 0.95);
       transform: scale(1.1);
+      box-shadow: 0 6px 24px rgba(74,108,247,0.45), 0 0 0 1px rgba(255,255,255,0.15) inset;
     }
 
     /* ── Tooltip panel ── */
     #${TOOLTIP_ID} {
       position: absolute;
       z-index: 2147483647;
-      max-width: 420px; min-width: 200px;
-      border-radius: 10px;
-      background: rgba(10, 10, 30, 0.7);
-      backdrop-filter: blur(8px);
-      -webkit-backdrop-filter: blur(8px);
+      max-width: 420px; min-width: 220px;
+      border-radius: 16px;
+      background: rgba(15, 15, 35, 0.75);
+      backdrop-filter: blur(20px) saturate(1.4);
+      -webkit-backdrop-filter: blur(20px) saturate(1.4);
       color: #fff;
-      font: 14px/1.5 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      font: 14px/1.5 'Inter', -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       pointer-events: auto;
       user-select: text;
-      box-shadow: 0 6px 24px rgba(0,0,0,0.4);
-      opacity: 0; transform: translateY(6px);
-      transition: opacity .18s ease, transform .18s ease;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.08) inset;
+      border: 1px solid rgba(255,255,255,0.08);
+      opacity: 0; transform: translateY(8px) scale(0.96);
+      transition: opacity .2s ease, transform .2s cubic-bezier(.34,1.3,.64,1);
       overflow: hidden;
     }
     #${TOOLTIP_ID}.visible {
-      opacity: 1; transform: translateY(0);
+      opacity: 1; transform: translateY(0) scale(1);
     }
 
     /* Tooltip inner layout */
     .${PREFIX}header {
       display: flex; align-items: center; justify-content: space-between;
-      padding: 10px 14px 6px;
-      font-size: 11px; text-transform: uppercase; letter-spacing: .5px;
-      color: rgba(255,255,255,0.4);
-      border-bottom: 1px solid rgba(255,255,255,0.07);
+      padding: 10px 14px 8px;
+      font-size: 11px; text-transform: uppercase; letter-spacing: .8px;
+      font-weight: 600;
+      color: rgba(255,255,255,0.35);
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      background: rgba(255,255,255,0.02);
     }
-    .${PREFIX}body { padding: 10px 14px 14px; }
+    .${PREFIX}body { padding: 12px 14px 14px; }
     .${PREFIX}row {
       display: flex; align-items: flex-start; gap: 8px;
       margin-bottom: 8px;
@@ -86,7 +93,7 @@
       flex-shrink: 0;
       font-size: 10px; font-weight: 700;
       text-transform: uppercase; letter-spacing: .4px;
-      color: rgba(255,255,255,0.35);
+      color: rgba(255,255,255,0.3);
       padding-top: 3px; min-width: 30px;
     }
     .${PREFIX}text {
@@ -94,23 +101,27 @@
       word-break: break-word;
     }
     .${PREFIX}translated {
-      color: #4ecdc4; font-weight: 500;
+      color: #4ecdc4; font-weight: 600;
     }
     .${PREFIX}original {
-      color: rgba(255,255,255,0.7);
+      color: rgba(255,255,255,0.65);
     }
     .${PREFIX}speak {
       flex-shrink: 0;
-      background: none; border: none; color: rgba(255,255,255,0.45);
-      cursor: pointer; padding: 2px; border-radius: 4px;
+      background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08);
+      color: rgba(255,255,255,0.4);
+      cursor: pointer; padding: 4px; border-radius: 8px;
       display: flex; align-items: center; justify-content: center;
-      transition: color .15s, background .15s;
+      transition: all .2s ease;
     }
     .${PREFIX}speak:hover {
       color: #fff; background: rgba(255,255,255,0.1);
+      border-color: rgba(255,255,255,0.15);
     }
     .${PREFIX}speak.speaking {
       color: #4ecdc4;
+      border-color: rgba(78,205,196,0.3);
+      background: rgba(78,205,196,0.1);
     }
     .${PREFIX}error {
       color: #ff6b6b; font-size: 13px; padding: 12px 14px;
@@ -118,10 +129,12 @@
     .${PREFIX}loading {
       display: flex; align-items: center; gap: 10px;
       padding: 14px;
+      color: rgba(255,255,255,0.5);
+      font-size: 13px;
     }
     .${PREFIX}spinner {
       width: 18px; height: 18px;
-      border: 2px solid rgba(255,255,255,0.15);
+      border: 2px solid rgba(255,255,255,0.1);
       border-top-color: #4a6cf7;
       border-radius: 50%;
       animation: ${PREFIX}spin .6s linear infinite;
@@ -133,19 +146,22 @@
     /* ── Save button (icon-only in header) ── */
     .${PREFIX}save-btn {
       display: flex; align-items: center; justify-content: center;
-      background: none; border: none;
-      color: rgba(255,255,255,0.4);
-      cursor: pointer; padding: 2px; border-radius: 4px;
-      transition: color .15s, background .15s, transform .15s;
+      background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08);
+      color: rgba(255,255,255,0.35);
+      cursor: pointer; padding: 4px; border-radius: 8px;
+      transition: all .2s ease;
       flex-shrink: 0;
     }
     .${PREFIX}save-btn:hover {
       color: #fff;
       background: rgba(255,255,255,0.1);
-      transform: scale(1.15);
+      border-color: rgba(255,255,255,0.15);
+      transform: scale(1.1);
     }
     .${PREFIX}save-btn.saved {
       color: #4ecdc4;
+      border-color: rgba(78,205,196,0.3);
+      background: rgba(78,205,196,0.1);
     }
 
     /* ── YouTube CC subtitle click-to-translate ── */
@@ -203,6 +219,14 @@
     let tooltipEl = null;
     let currentText = "";
     let currentRect = null;
+    let lastMouseX = 0;
+    let lastMouseY = 0;
+
+    // Track mouse position for smart icon placement
+    document.addEventListener("mousemove", (e) => {
+        lastMouseX = e.clientX;
+        lastMouseY = e.clientY;
+    });
 
     // ── Helpers: Icon ──────────────────────────────────────────────
     function getIcon() {
@@ -219,10 +243,81 @@
     function showIcon(rect) {
         const icon = getIcon();
         icon.classList.remove("visible");
+
         const scrollX = window.scrollX;
         const scrollY = window.scrollY;
-        icon.style.left = `${rect.right + scrollX + 6}px`;
-        icon.style.top = `${rect.top + scrollY + (rect.height - 32) / 2}px`;
+        const ICON_SIZE = 34;
+        const GAP = 8;
+        const vpW = document.documentElement.clientWidth;
+        const vpH = document.documentElement.clientHeight;
+
+        // Mouse position in page coords
+        const mx = lastMouseX;
+        const my = lastMouseY;
+
+        // Selection rect in viewport coords
+        const selTop = rect.top;
+        const selBottom = rect.bottom;
+        const selLeft = rect.left;
+        const selRight = rect.right;
+
+        // Try positions in order: right of mouse, left of mouse, below, above
+        // Always avoid overlapping the selected text rect
+        let bestX = mx + GAP;
+        let bestY = my - ICON_SIZE / 2;
+
+        // Check if icon at (bestX, bestY) overlaps selection
+        function overlapsSelection(ix, iy) {
+            const iconRight = ix + ICON_SIZE;
+            const iconBottom = iy + ICON_SIZE;
+            return !(
+                ix > selRight ||
+                iconRight < selLeft ||
+                iy > selBottom ||
+                iconBottom < selTop
+            );
+        }
+
+        // Strategy 1: Right of mouse, vertically centered on mouse
+        if (bestX + ICON_SIZE <= vpW && !overlapsSelection(bestX, bestY)) {
+            // good
+        }
+        // Strategy 2: Left of mouse
+        else if (
+            mx - GAP - ICON_SIZE >= 0 &&
+            !overlapsSelection(mx - GAP - ICON_SIZE, bestY)
+        ) {
+            bestX = mx - GAP - ICON_SIZE;
+        }
+        // Strategy 3: Below selection, horizontally near mouse
+        else if (selBottom + GAP + ICON_SIZE <= vpH) {
+            bestX = Math.max(
+                4,
+                Math.min(mx - ICON_SIZE / 2, vpW - ICON_SIZE - 4),
+            );
+            bestY = selBottom + GAP;
+        }
+        // Strategy 4: Above selection
+        else if (selTop - GAP - ICON_SIZE >= 0) {
+            bestX = Math.max(
+                4,
+                Math.min(mx - ICON_SIZE / 2, vpW - ICON_SIZE - 4),
+            );
+            bestY = selTop - GAP - ICON_SIZE;
+        }
+        // Fallback: right of selection
+        else {
+            bestX = selRight + GAP;
+            bestY = selTop + (rect.height - ICON_SIZE) / 2;
+        }
+
+        // Clamp to viewport
+        bestX = Math.max(4, Math.min(bestX, vpW - ICON_SIZE - 4));
+        bestY = Math.max(4, Math.min(bestY, vpH - ICON_SIZE - 4));
+
+        icon.style.left = `${bestX + scrollX}px`;
+        icon.style.top = `${bestY + scrollY}px`;
+
         requestAnimationFrame(() => icon.classList.add("visible"));
     }
 
