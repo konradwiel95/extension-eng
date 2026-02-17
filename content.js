@@ -320,9 +320,8 @@
         return new Promise((resolve) => {
             if (chrome?.storage?.sync) {
                 chrome.storage.sync.get(
-                    { speechVoice: "", speechPitch: 1, speechRate: 0.95 },
+                    { speechVoice: "", speechRate: 0.95 },
                     (data) => {
-                        utter.pitch = data.speechPitch;
                         utter.rate = data.speechRate;
                         if (data.speechVoice) {
                             const voices = window.speechSynthesis.getVoices();

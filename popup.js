@@ -23,10 +23,8 @@ document.querySelectorAll(".tab").forEach((tab) => {
     });
 });
 
-// ── Voice & pitch elements ────────────────────────────────────────
+// ── Voice & rate elements ─────────────────────────────────────────
 const voiceSelect = document.getElementById("voiceSelect");
-const pitchRange = document.getElementById("pitchRange");
-const pitchValue = document.getElementById("pitchValue");
 const rateRange = document.getElementById("rateRange");
 const rateValue = document.getElementById("rateValue");
 
@@ -38,11 +36,9 @@ function flashSaved() {
 
 // ── Settings: load & save language ────────────────────────────────
 chrome.storage.sync.get(
-    { targetLang: "pl", speechVoice: "", speechPitch: 1, speechRate: 0.95 },
+    { targetLang: "pl", speechVoice: "", speechRate: 0.95 },
     (data) => {
         select.value = data.targetLang;
-        pitchRange.value = data.speechPitch;
-        pitchValue.textContent = parseFloat(data.speechPitch).toFixed(1);
         rateRange.value = data.speechRate;
         rateValue.textContent = parseFloat(data.speechRate).toFixed(2);
         // Load voices and set selection
@@ -76,17 +72,6 @@ window.speechSynthesis.onvoiceschanged = () => {
 
 voiceSelect.addEventListener("change", () => {
     chrome.storage.sync.set({ speechVoice: voiceSelect.value }, flashSaved);
-});
-
-// ── Pitch slider ──────────────────────────────────────────────────
-pitchRange.addEventListener("input", () => {
-    pitchValue.textContent = parseFloat(pitchRange.value).toFixed(1);
-});
-pitchRange.addEventListener("change", () => {
-    chrome.storage.sync.set(
-        { speechPitch: parseFloat(pitchRange.value) },
-        flashSaved,
-    );
 });
 
 // ── Rate slider ───────────────────────────────────────────────────
