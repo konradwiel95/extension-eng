@@ -145,10 +145,10 @@
       word-break: break-word;
     }
     .${PREFIX}translated {
-      color: #4ecdc4; font-weight: 600;
+      color: rgba(255,255,255,0.65);
     }
     .${PREFIX}original {
-      color: rgba(255,255,255,0.65);
+      color: #4ecdc4; font-weight: 600;
     }
     .${PREFIX}speak {
       flex-shrink: 0;
@@ -210,29 +210,18 @@
 
     /* ── YouTube CC subtitle click-to-translate ── */
     .ytp-caption-segment.${PREFIX}clickable {
+      position: relative;
+    }
+    .${PREFIX}yt-word {
       cursor: pointer !important;
       border-radius: 3px;
       transition: background .15s ease, box-shadow .15s ease;
-      position: relative;
+      display: inline;
+      padding: 1px 2px;
     }
-    .ytp-caption-segment.${PREFIX}clickable:hover {
+    .${PREFIX}yt-word:hover {
       background: rgba(74, 108, 247, 0.45) !important;
       box-shadow: 0 0 0 3px rgba(74, 108, 247, 0.3);
-    }
-    .ytp-caption-segment.${PREFIX}clickable::after {
-      content: '⟶';
-      position: absolute;
-      right: -20px;
-      top: 50%;
-      transform: translateY(-50%);
-      font-size: 12px;
-      color: rgba(74, 108, 247, 0.8);
-      opacity: 0;
-      transition: opacity .15s ease;
-      pointer-events: none;
-    }
-    .ytp-caption-segment.${PREFIX}clickable:hover::after {
-      opacity: 1;
     }
 
     /* YouTube subtitle tooltip adjustments */
@@ -267,6 +256,7 @@
     let lastMouseX = 0;
     let lastMouseY = 0;
     let isReading = false;
+    let ytDismissClickFn = null; // assigned by YouTube CC module
 
     // Track mouse position for smart icon placement
     document.addEventListener("mousemove", (e) => {
@@ -845,7 +835,7 @@
             const html = `
                 <div class="${PREFIX}header">
                     <span>${langTag(srcLang)} → ${langTag(targetLang)}</span>
-                    <button class="${PREFIX}save-btn" data-src="${escapeAttr(text)}" data-translated="${escapeAttr(translated)}" data-src-lang="${escapeAttr(srcLang)}" data-tgt-lang="${escapeAttr(targetLang)}" title="Zapisz do kolekcji">${SVG_SAVE}</button>
+                    <button class="${PREFIX}save-btn" data-src="${escapeAttr(text)}" data-translated="${escapeAttr(translated)}" data-src-lang="${escapeAttr(srcLang)}" data-tgt-lang="${escapeAttr(targetLang)}" data-sentence="" data-sentence-translated="" title="Zapisz do kolekcji">${SVG_SAVE}</button>
                 </div>
                 <div class="${PREFIX}body">
                     <div class="${PREFIX}row">
@@ -886,6 +876,10 @@
                         translated: saveBtn.getAttribute("data-translated"),
                         srcLang: saveBtn.getAttribute("data-src-lang"),
                         tgtLang: saveBtn.getAttribute("data-tgt-lang"),
+                        sentence: saveBtn.getAttribute("data-sentence") || "",
+                        sentenceTranslated:
+                            saveBtn.getAttribute("data-sentence-translated") ||
+                            "",
                         url: window.location.href,
                         timestamp: Date.now(),
                         downloaded: false,
@@ -934,12 +928,17 @@
     // ── Click-away to dismiss ──────────────────────────────────────
     document.addEventListener("mousedown", (e) => {
         if (iconEl?.contains(e.target) || tooltipEl?.contains(e.target)) return;
+        // If YouTube click-locked, dismiss it and resume video
+        if (ytDismissClickFn) ytDismissClickFn();
         hideAll();
     });
 
     // ── Escape to dismiss ──────────────────────────────────────────
     document.addEventListener("keydown", (e) => {
-        if (e.key === "Escape") hideAll();
+        if (e.key === "Escape") {
+            if (ytDismissClickFn) ytDismissClickFn();
+            hideAll();
+        }
     });
 
     // ── Save word to storage ───────────────────────────────────────
@@ -1004,6 +1003,99 @@
         let ytHoverTimer = null;
         let ytIsHovering = false;
         let ytWasPlayingBeforeHover = false;
+        let ytClickLocked = false;
+        let ytClickWasPlaying = false;
+
+        // Dismiss a click-locked YT tooltip and resume video
+        function dismissYTClick() {
+            if (!ytClickLocked) return;
+            ytClickLocked = false;
+            hideTooltip();
+            if (ytClickWasPlaying) {
+                ytClickWasPlaying = false;
+                const video = document.querySelector("video");
+                if (video && video.paused) video.play();
+            }
+        }
+        ytDismissClickFn = dismissYTClick;
+
+        // ── Subtitle history buffer ──
+        // Accumulates CC text over time so we can extract full sentences
+        let ytSubtitleBuffer = "";
+        let ytLastSegmentText = "";
+
+        function appendToSubtitleBuffer(text) {
+            const trimmed = text.trim();
+            if (!trimmed) return;
+            // Skip YouTube UI text that leaks into captions
+            if (
+                /\(auto-generated\)|Click for settings|\bsubtitles?\/CC\b/i.test(
+                    trimmed,
+                )
+            )
+                return;
+            // Avoid duplicating the same segment if it re-renders
+            if (trimmed === ytLastSegmentText) return;
+            // Check if the new text overlaps with the end of buffer
+            // (YouTube sometimes re-shows overlapping text)
+            if (ytSubtitleBuffer.endsWith(trimmed)) return;
+            // If buffer ends with part of the new text, find overlap
+            let overlap = 0;
+            const maxOverlap = Math.min(
+                trimmed.length,
+                ytSubtitleBuffer.length,
+            );
+            for (let i = 1; i <= maxOverlap; i++) {
+                if (ytSubtitleBuffer.endsWith(trimmed.substring(0, i))) {
+                    overlap = i;
+                }
+            }
+            const newPart = trimmed.substring(overlap);
+            if (newPart) {
+                ytSubtitleBuffer +=
+                    (ytSubtitleBuffer && !ytSubtitleBuffer.endsWith(" ")
+                        ? " "
+                        : "") + newPart;
+            }
+            ytLastSegmentText = trimmed;
+            // Keep buffer from growing too large (keep last ~2000 chars)
+            if (ytSubtitleBuffer.length > 3000) {
+                ytSubtitleBuffer = ytSubtitleBuffer.substring(
+                    ytSubtitleBuffer.length - 2000,
+                );
+            }
+        }
+
+        function extractSentence(buffer, word) {
+            // Find the word in the buffer (search from end for most recent occurrence)
+            const idx = buffer.lastIndexOf(word);
+            if (idx === -1) return null;
+
+            // Sentence-ending punctuation
+            const sentenceEnders = /[.!?…]/;
+
+            // Find start of sentence: search backwards from word position
+            let start = 0;
+            for (let i = idx - 1; i >= 0; i--) {
+                if (sentenceEnders.test(buffer[i])) {
+                    start = i + 1;
+                    break;
+                }
+            }
+
+            // Find end of sentence: search forwards from word position
+            let end = buffer.length;
+            for (let i = idx + word.length; i < buffer.length; i++) {
+                if (sentenceEnders.test(buffer[i])) {
+                    end = i + 1;
+                    break;
+                }
+            }
+
+            const sentence = buffer.substring(start, end).trim();
+            // Only return if it's meaningfully longer than the word itself
+            return sentence.length > word.length + 2 ? sentence : null;
+        }
 
         async function cachedTranslate(text, targetLang) {
             const key = `${text}|${targetLang}`;
@@ -1017,6 +1109,14 @@
             return result;
         }
 
+        // Strip [bracketed] content (e.g. [Applause], [Music]) from text
+        function stripBrackets(text) {
+            return text
+                .replace(/\[.*?\]/g, "")
+                .replace(/\s{2,}/g, " ")
+                .trim();
+        }
+
         // Build tooltip HTML
         function buildYTTooltipHtml(
             srcLang,
@@ -1028,15 +1128,19 @@
         ) {
             let fullLineHtml = "";
             if (fullLine && fullTranslated) {
-                fullLineHtml = `
+                const cleanFullLine = stripBrackets(fullLine);
+                const cleanFullTranslated = stripBrackets(fullTranslated);
+                if (cleanFullLine) {
+                    fullLineHtml = `
                     <div class="${PREFIX}row" style="margin-top:6px; padding-top:8px; border-top:1px solid rgba(255,255,255,0.1);">
                         <span class="${PREFIX}label">ALL</span>
-                        <span class="${PREFIX}text ${PREFIX}original" style="font-size:12px;">${escapeHtml(fullLine)}</span>
+                        <span class="${PREFIX}text ${PREFIX}original" style="font-size:12px;">${escapeHtml(cleanFullLine)}</span>
                     </div>
                     <div class="${PREFIX}row">
                         <span class="${PREFIX}label"></span>
-                        <span class="${PREFIX}text ${PREFIX}translated" style="font-size:12px;">${escapeHtml(fullTranslated)}</span>
+                        <span class="${PREFIX}text ${PREFIX}translated" style="font-size:12px;">${escapeHtml(cleanFullTranslated)}</span>
                     </div>`;
+                }
             }
             return `
                 <div class="${PREFIX}header">
@@ -1082,6 +1186,10 @@
                         translated: saveBtn.getAttribute("data-translated"),
                         srcLang: saveBtn.getAttribute("data-src-lang"),
                         tgtLang: saveBtn.getAttribute("data-tgt-lang"),
+                        sentence: saveBtn.getAttribute("data-sentence") || "",
+                        sentenceTranslated:
+                            saveBtn.getAttribute("data-sentence-translated") ||
+                            "",
                         url: window.location.href,
                         timestamp: Date.now(),
                         downloaded: false,
@@ -1092,14 +1200,51 @@
             }
         }
 
-        // Make subtitle segment interactive: HOVER = translate, CLICK = speak + full sentence
+        // Split subtitle segment text into individual word spans
+        function splitSegmentIntoWords(el) {
+            const text = el.textContent;
+            if (!text.trim()) return;
+            el.textContent = "";
+            const parts = text.match(/\S+|\s+/g) || [];
+            for (const part of parts) {
+                if (/\S/.test(part)) {
+                    const wordSpan = document.createElement("span");
+                    wordSpan.className = `${PREFIX}yt-word`;
+                    wordSpan.textContent = part;
+                    el.appendChild(wordSpan);
+                } else {
+                    el.appendChild(document.createTextNode(part));
+                }
+            }
+        }
+
+        // Make subtitle segment interactive: HOVER on word = translate word, CLICK = speak + full sentence
         function makeSubtitleClickable(el) {
             if (el.dataset[PREFIX + "bound"]) return;
             el.dataset[PREFIX + "bound"] = "1";
             el.classList.add(`${PREFIX}clickable`);
 
-            // ── HOVER → translate fragment ──
-            el.addEventListener("mouseenter", async () => {
+            // Split into word spans
+            splitSegmentIntoWords(el);
+
+            // ── HOVER on individual word → translate that single word ──
+            el.addEventListener(
+                "mouseenter",
+                (e) => {
+                    // Only react if hovering a word span
+                    if (!e.target.classList?.contains(`${PREFIX}yt-word`))
+                        return;
+                },
+                true,
+            );
+
+            el.addEventListener("mouseover", async (e) => {
+                const wordSpan = e.target.closest(`.${PREFIX}yt-word`);
+                if (!wordSpan) return;
+
+                // Don't show hover tooltip if click-locked
+                if (ytClickLocked) return;
+
                 ytIsHovering = true;
                 clearTimeout(ytHoverTimer);
 
@@ -1110,10 +1255,10 @@
                     video.pause();
                 }
 
-                const word = el.textContent.trim();
+                const word = wordSpan.textContent.trim();
                 if (!word) return;
 
-                const rect = el.getBoundingClientRect();
+                const rect = wordSpan.getBoundingClientRect();
                 currentText = word;
                 currentRect = rect;
 
@@ -1147,6 +1292,9 @@
                         );
                         showTooltip(html, rect);
                         attachYTTooltipHandlers();
+
+                        // Auto-speak the hovered word in source language
+                        speak(word, srcLang);
                     } catch (err) {
                         console.error("[Quick Translator – YT CC hover]", err);
                         showTooltip(
@@ -1160,9 +1308,15 @@
             el.addEventListener("mouseleave", () => {
                 ytIsHovering = false;
                 clearTimeout(ytHoverTimer);
+                // Don't hide if click-locked
+                if (ytClickLocked) return;
                 // Delay hiding so user can interact with tooltip
                 setTimeout(() => {
-                    if (!ytIsHovering && !tooltipEl?.matches(":hover")) {
+                    if (
+                        !ytIsHovering &&
+                        !ytClickLocked &&
+                        !tooltipEl?.matches(":hover")
+                    ) {
                         hideTooltip();
                         // Resume video if it was playing before hover
                         if (ytWasPlayingBeforeHover) {
@@ -1174,35 +1328,46 @@
                 }, 400);
             });
 
-            // ── CLICK → speak fragment + translate full sentence ──
+            // ── CLICK on word → speak word + translate full sentence (sticky) ──
             el.addEventListener("click", async (e) => {
+                const wordSpan = e.target.closest(`.${PREFIX}yt-word`);
+                if (!wordSpan) return;
+
                 e.stopPropagation();
                 e.preventDefault();
-                ytIsHovering = true; // keep tooltip visible
                 clearTimeout(ytHoverTimer);
 
-                const clickedWord = el.textContent.trim();
+                // Lock the tooltip so it stays visible
+                ytClickLocked = true;
+
+                const clickedWord = wordSpan.textContent.trim();
                 if (!clickedWord) return;
 
-                // Gather full line from all segments
-                const container =
-                    el.closest(".captions-text") ||
-                    el.closest(".ytp-caption-window-container") ||
-                    el.parentElement;
-                const segments = container
-                    ? container.querySelectorAll(".ytp-caption-segment")
-                    : [el];
-                const fullLine = Array.from(segments)
-                    .map((s) => s.textContent)
-                    .join(" ")
-                    .trim();
-
-                // Pause the video
+                // Pause the video and remember state
                 const video = document.querySelector("video");
-                const wasPlaying = video && !video.paused;
-                if (wasPlaying) video.pause();
+                if (video && !video.paused) {
+                    ytClickWasPlaying = true;
+                    video.pause();
+                }
 
-                const rect = el.getBoundingClientRect();
+                // Try to extract full sentence from subtitle buffer
+                let fullLine = extractSentence(ytSubtitleBuffer, clickedWord);
+                // Fallback: gather from visible segments
+                if (!fullLine) {
+                    const container =
+                        el.closest(".captions-text") ||
+                        el.closest(".ytp-caption-window-container") ||
+                        el.parentElement;
+                    const segments = container
+                        ? container.querySelectorAll(".ytp-caption-segment")
+                        : [el];
+                    fullLine = Array.from(segments)
+                        .map((s) => s.textContent)
+                        .join(" ")
+                        .trim();
+                }
+
+                const rect = wordSpan.getBoundingClientRect();
                 currentText = clickedWord;
                 currentRect = rect;
 
@@ -1215,7 +1380,7 @@
                             ? detectedLang
                             : "auto";
 
-                    // Speak the clicked fragment immediately
+                    // Speak the clicked word immediately
                     speak(clickedWord, srcLang);
 
                     // Show loading for full sentence
@@ -1256,6 +1421,11 @@
             });
         }
 
+        // Check if a caption segment is inside the actual subtitle overlay
+        function isActualSubtitle(el) {
+            return !!el.closest(".ytp-caption-window-container");
+        }
+
         // Observe DOM for subtitle elements appearing
         function observeSubtitles() {
             const observer = new MutationObserver((mutations) => {
@@ -1263,15 +1433,22 @@
                     for (const node of mutation.addedNodes) {
                         if (node.nodeType !== 1) continue;
                         // Direct match
-                        if (node.classList?.contains("ytp-caption-segment")) {
+                        if (
+                            node.classList?.contains("ytp-caption-segment") &&
+                            isActualSubtitle(node)
+                        ) {
+                            appendToSubtitleBuffer(node.textContent);
                             makeSubtitleClickable(node);
                         }
                         // Children match
-
                         const segments =
-                            node.querySelectorAll?.(".ytp-caption-segment") ||
-                            [];
-                        segments.forEach(makeSubtitleClickable);
+                            node.querySelectorAll?.(
+                                ".ytp-caption-window-container .ytp-caption-segment",
+                            ) || [];
+                        segments.forEach((seg) => {
+                            appendToSubtitleBuffer(seg.textContent);
+                            makeSubtitleClickable(seg);
+                        });
                     }
                 }
             });
@@ -1283,8 +1460,13 @@
 
             // Also process any subtitles already on the page
             document
-                .querySelectorAll(".ytp-caption-segment")
-                .forEach(makeSubtitleClickable);
+                .querySelectorAll(
+                    ".ytp-caption-window-container .ytp-caption-segment",
+                )
+                .forEach((seg) => {
+                    appendToSubtitleBuffer(seg.textContent);
+                    makeSubtitleClickable(seg);
+                });
         }
 
         // Start observing when YouTube player is ready
@@ -1292,13 +1474,13 @@
             document.addEventListener("DOMContentLoaded", () => {
                 observeSubtitles();
                 showYTHint(
-                    "Najedź na napisy CC = tłumaczenie · Kliknij = wymów + całe zdanie ✨",
+                    "Najedź na słowo w CC = tłumaczenie · Kliknij = wymów + całe zdanie ✨",
                 );
             });
         } else {
             observeSubtitles();
             showYTHint(
-                "Najedź na napisy CC = tłumaczenie · Kliknij = wymów + całe zdanie ✨",
+                "Najedź na słowo w CC = tłumaczenie · Kliknij = wymów + całe zdanie ✨",
             );
         }
 

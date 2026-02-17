@@ -166,10 +166,27 @@ function loadWords() {
                     minute: "2-digit",
                 });
                 const isNew = !w.downloaded ? " new-item" : "";
+                let sentenceHtml = "";
+                if (w.sentence) {
+                    const esc = escapeHtml(w.sentence);
+                    const escWord = escapeHtml(w.original);
+                    const highlighted = esc.replace(
+                        new RegExp(
+                            `(${escWord.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`,
+                            "i",
+                        ),
+                        '<span class="wi-cloze">$1</span>',
+                    );
+                    sentenceHtml = `<div class="wi-sentence">${highlighted}</div>`;
+                    if (w.sentenceTranslated) {
+                        sentenceHtml += `<div class="wi-sentence" style="color:rgba(255,255,255,0.25);">${escapeHtml(w.sentenceTranslated)}</div>`;
+                    }
+                }
                 return `<div class="word-item${isNew}" data-index="${i}">
                     <div class="wi-texts">
                         <div class="wi-original">${escapeHtml(w.original)}</div>
                         <div class="wi-translated">${escapeHtml(w.translated)}</div>
+                        ${sentenceHtml}
                         <div class="wi-meta">${date} · ${(w.srcLang || "?").toUpperCase()}→${(w.tgtLang || "?").toUpperCase()}</div>
                     </div>
                     <button class="wi-delete" data-original="${escapeAttr(w.original)}" data-ts="${w.timestamp}" title="Usuń">✕</button>
@@ -198,20 +215,203 @@ function deleteWord(original, timestamp) {
     });
 }
 
-// ── Export: Anki (.txt tab-separated) ─────────────────────────────
-document.getElementById("exportAnki").addEventListener("click", () => {
-    chrome.storage.local.get({ savedWords: [] }, (data) => {
-        const words = filterWords(data.savedWords || []);
-        if (words.length === 0) return;
+// ── Google TTS URL helper ─────────────────────────────────────────
+function googleTtsUrl(text, lang) {
+    return `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=${encodeURIComponent(lang)}&q=${encodeURIComponent(text)}`;
+}
 
-        // Anki format: front<TAB>back (one card per line)
-        const lines = words.map((w) => `${w.original}\t${w.translated}`);
-        const content = lines.join("\n");
-        downloadFile(content, `anki-export-${dateTag()}.txt`, "text/plain");
+// ── Fetch audio as blob ───────────────────────────────────────────
+async function fetchAudioBlob(text, lang) {
+    try {
+        const url = googleTtsUrl(text, lang);
+        const res = await fetch(url);
+        if (!res.ok) return null;
+        return await res.blob();
+    } catch {
+        return null;
+    }
+}
+
+// ── Simple ZIP builder (no library needed) ────────────────────────
+function buildZip(files) {
+    // files: [{name: string, data: Uint8Array}]
+    const localHeaders = [];
+    const centralHeaders = [];
+    let offset = 0;
+
+    for (const file of files) {
+        const nameBytes = new TextEncoder().encode(file.name);
+        const data = file.data;
+
+        // Local file header
+        const local = new Uint8Array(30 + nameBytes.length + data.length);
+        const lv = new DataView(local.buffer);
+        lv.setUint32(0, 0x04034b50, true); // signature
+        lv.setUint16(4, 20, true); // version needed
+        lv.setUint16(6, 0, true); // flags
+        lv.setUint16(8, 0, true); // compression (store)
+        lv.setUint16(10, 0, true); // mod time
+        lv.setUint16(12, 0, true); // mod date
+        lv.setUint32(14, crc32(data), true); // crc32
+        lv.setUint32(18, data.length, true); // compressed size
+        lv.setUint32(22, data.length, true); // uncompressed size
+        lv.setUint16(26, nameBytes.length, true); // name length
+        lv.setUint16(28, 0, true); // extra length
+        local.set(nameBytes, 30);
+        local.set(data, 30 + nameBytes.length);
+        localHeaders.push(local);
+
+        // Central directory header
+        const central = new Uint8Array(46 + nameBytes.length);
+        const cv = new DataView(central.buffer);
+        cv.setUint32(0, 0x02014b50, true);
+        cv.setUint16(4, 20, true);
+        cv.setUint16(6, 20, true);
+        cv.setUint16(8, 0, true);
+        cv.setUint16(10, 0, true);
+        cv.setUint16(12, 0, true);
+        cv.setUint16(14, 0, true);
+        cv.setUint32(16, crc32(data), true);
+        cv.setUint32(20, data.length, true);
+        cv.setUint32(24, data.length, true);
+        cv.setUint16(28, nameBytes.length, true);
+        cv.setUint16(30, 0, true);
+        cv.setUint16(32, 0, true);
+        cv.setUint16(34, 0, true);
+        cv.setUint16(36, 0, true);
+        cv.setUint32(38, 0x20, true); // external attrs
+        cv.setUint32(42, offset, true); // local header offset
+        central.set(nameBytes, 46);
+        centralHeaders.push(central);
+
+        offset += local.length;
+    }
+
+    const centralSize = centralHeaders.reduce((s, c) => s + c.length, 0);
+    const eocd = new Uint8Array(22);
+    const ev = new DataView(eocd.buffer);
+    ev.setUint32(0, 0x06054b50, true);
+    ev.setUint16(4, 0, true);
+    ev.setUint16(6, 0, true);
+    ev.setUint16(8, files.length, true);
+    ev.setUint16(10, files.length, true);
+    ev.setUint32(12, centralSize, true);
+    ev.setUint32(16, offset, true);
+    ev.setUint16(20, 0, true);
+
+    const total = offset + centralSize + 22;
+    const result = new Uint8Array(total);
+    let pos = 0;
+    for (const lh of localHeaders) {
+        result.set(lh, pos);
+        pos += lh.length;
+    }
+    for (const ch of centralHeaders) {
+        result.set(ch, pos);
+        pos += ch.length;
+    }
+    result.set(eocd, pos);
+    return result;
+}
+
+function crc32(data) {
+    let crc = 0xffffffff;
+    for (let i = 0; i < data.length; i++) {
+        crc ^= data[i];
+        for (let j = 0; j < 8; j++) {
+            crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+        }
+    }
+    return (crc ^ 0xffffffff) >>> 0;
+}
+
+// ── Export: Anki Cloze with audio (.zip) ──────────────────────────
+document.getElementById("exportAnki").addEventListener("click", async () => {
+    const btn = document.getElementById("exportAnki");
+    const origText = btn.textContent;
+    btn.textContent = "⏳ Pobieram audio…";
+    btn.disabled = true;
+
+    try {
+        const data = await new Promise((r) =>
+            chrome.storage.local.get({ savedWords: [] }, r),
+        );
+        const words = filterWords(data.savedWords || []);
+        if (words.length === 0) {
+            btn.textContent = origText;
+            btn.disabled = false;
+            return;
+        }
+
+        const files = [];
+        const lines = [];
+
+        for (let i = 0; i < words.length; i++) {
+            const w = words[i];
+            const audioFilename = `audio_${i}.mp3`;
+
+            // Build Cloze text: sentence with the word as {{c1::word::translation}}
+            let clozeText;
+            if (w.sentence) {
+                // Replace the word in sentence with cloze deletion
+                const regex = new RegExp(
+                    `(${w.original.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`,
+                    "i",
+                );
+                clozeText = w.sentence.replace(
+                    regex,
+                    `{{c1::$1::${w.translated}}}`,
+                );
+            } else {
+                clozeText = `{{c1::${w.original}::${w.translated}}}`;
+            }
+
+            // Back side: translation + sentence translation
+            let backText = w.translated;
+            if (w.sentenceTranslated) {
+                backText += `<br><br><i>${w.sentenceTranslated}</i>`;
+            }
+
+            // Anki line: Text<TAB>Extra<TAB>Tags
+            const soundTag = `[sound:${audioFilename}]`;
+            lines.push(`${clozeText} ${soundTag}\t${backText}`);
+
+            // Fetch TTS audio for the sentence (or just the word)
+            const ttsText = w.sentence || w.original;
+            const ttsLang = w.srcLang || "en";
+            const audioBlob = await fetchAudioBlob(ttsText, ttsLang);
+            if (audioBlob) {
+                const audioData = new Uint8Array(await audioBlob.arrayBuffer());
+                files.push({ name: audioFilename, data: audioData });
+            }
+        }
+
+        // Add the text file
+        const txtContent = lines.join("\n");
+        const txtData = new TextEncoder().encode(txtContent);
+        files.push({ name: `anki-cloze-${dateTag()}.txt`, data: txtData });
+
+        // Build and download ZIP
+        const zipData = buildZip(files);
+        const blob = new Blob([zipData], { type: "application/zip" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `anki-cloze-${dateTag()}.zip`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
 
         // Mark as downloaded
         markAsDownloaded(words, data.savedWords);
-    });
+    } catch (err) {
+        console.error("Anki export error:", err);
+        alert("Błąd eksportu: " + err.message);
+    } finally {
+        btn.textContent = origText;
+        btn.disabled = false;
+    }
 });
 
 // ── Export: CSV (Excel) ───────────────────────────────────────────
