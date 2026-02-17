@@ -80,15 +80,18 @@
 
     /* ── Word highlight for read-aloud ── */
     .${PREFIX}word-hl {
-      transition: background .12s ease, box-shadow .12s ease, color .12s ease;
-      border-radius: 3px;
-      padding: 1px 0;
+      transition: background .15s ease, box-shadow .15s ease;
+      border-radius: 4px;
+      padding: 2px 1px;
+      display: inline;
     }
     .${PREFIX}word-active {
-      background: rgba(78, 205, 196, 0.3) !important;
-      box-shadow: 0 0 12px rgba(78, 205, 196, 0.25);
-      color: inherit;
-      border-radius: 3px;
+      background: rgba(78, 205, 196, 0.45) !important;
+      box-shadow: 0 0 18px rgba(78, 205, 196, 0.4), 0 0 4px rgba(78,205,196,0.6) inset;
+      color: #fff !important;
+      border-radius: 4px;
+      outline: 2px solid rgba(78, 205, 196, 0.4);
+      outline-offset: 1px;
     }
 
     /* ── Tooltip panel ── */
@@ -563,47 +566,141 @@
             return;
         }
 
-        // Compute word positions (char offsets) in text
-        const wordPositions = [];
-        const regex = /\S+/g;
-        let m;
-        while ((m = regex.exec(text)) !== null) {
-            wordPositions.push({
-                start: m.index,
-                end: m.index + m[0].length,
-            });
-        }
-
         // Detect language from page
         const pageLang =
             document.documentElement.lang || navigator.language || "en";
 
         window.speechSynthesis.cancel();
-        const utter = new SpeechSynthesisUtterance(text);
+
+        // Build the utterance text from actual span contents to ensure charIndex matches
+        const utterText = wordSpans.map((s) => s.textContent).join(" ");
+
+        // Build char offset map: for each word span, its start offset in utterText
+        const wordCharStarts = [];
+        let offset = 0;
+        for (let i = 0; i < wordSpans.length; i++) {
+            wordCharStarts.push(offset);
+            offset += wordSpans[i].textContent.length + 1; // +1 for the space
+        }
+
+        const utter = new SpeechSynthesisUtterance(utterText);
         utter.lang = pageLang;
 
-        function setupAndSpeak() {
+        let currentWordIdx = -1;
+        let boundaryCount = 0;
+        let boundaryFired = false;
+        let fallbackRAF = null;
+        let speechStartTime = 0;
+        let totalChars = utterText.length;
+
+        function highlightWord(idx) {
+            if (idx < 0 || idx >= wordSpans.length) return;
+            if (idx === currentWordIdx) return;
+            currentWordIdx = idx;
+            for (let i = 0; i < wordSpans.length; i++) {
+                if (i === idx) {
+                    wordSpans[i].classList.add(`${PREFIX}word-active`);
+                } else {
+                    wordSpans[i].classList.remove(`${PREFIX}word-active`);
+                }
+            }
+            wordSpans[idx].scrollIntoView({
+                behavior: "smooth",
+                block: "nearest",
+                inline: "nearest",
+            });
+        }
+
+        // Fallback: use elapsed time to estimate which word is being spoken
+        function startFallbackLoop() {
+            if (boundaryFired) return;
+
+            // Self-calibrating: start with estimate, adjust if we detect drift
+            let charsPerSec = 19.2 * (utter.rate || 1);
+
+            function tick() {
+                if (!isReading || boundaryFired) return;
+                const elapsedSec = (performance.now() - speechStartTime) / 1000;
+                const estimatedCharPos = elapsedSec * charsPerSec;
+
+                // Find which word this position corresponds to
+                let idx = 0;
+                for (let i = 0; i < wordCharStarts.length; i++) {
+                    if (estimatedCharPos >= wordCharStarts[i]) {
+                        idx = i;
+                    } else {
+                        break;
+                    }
+                }
+                highlightWord(idx);
+                fallbackRAF = requestAnimationFrame(tick);
+            }
+
+            fallbackRAF = requestAnimationFrame(tick);
+        }
+
+        function stopFallbackLoop() {
+            if (fallbackRAF) {
+                cancelAnimationFrame(fallbackRAF);
+                fallbackRAF = null;
+            }
+        }
+
+        function configAndSpeak(rate, voice) {
+            utter.rate = rate;
+            if (voice) utter.voice = voice;
+
+            utter.onstart = () => {
+                speechStartTime = performance.now();
+                highlightWord(0);
+                // Start fallback; onboundary will cancel it if it works
+                setTimeout(() => {
+                    if (!boundaryFired) startFallbackLoop();
+                }, 200);
+            };
+
+            // Use sequential counting: each "word" boundary = next word
+            // Also calibrate fallback speed from real boundary data
             utter.onboundary = (ev) => {
                 if (ev.name === "word") {
-                    const idx = wordPositions.findIndex(
-                        (w) => w.start === ev.charIndex,
-                    );
-                    if (idx >= 0 && idx < wordSpans.length) {
-                        wordSpans.forEach((s) =>
-                            s.classList.remove(`${PREFIX}word-active`),
-                        );
-                        wordSpans[idx].classList.add(`${PREFIX}word-active`);
-                        wordSpans[idx].scrollIntoView({
-                            behavior: "smooth",
-                            block: "nearest",
-                            inline: "nearest",
-                        });
+                    if (!boundaryFired) {
+                        boundaryFired = true;
+                        stopFallbackLoop();
+                    }
+                    highlightWord(boundaryCount);
+                    boundaryCount++;
+                }
+                // Also handle "sentence" boundaries
+                if (ev.name === "sentence") {
+                    if (!boundaryFired) {
+                        boundaryFired = true;
+                        stopFallbackLoop();
+                    }
+                    // Find word index matching this charIndex
+                    const ci = ev.charIndex;
+                    for (let i = 0; i < wordCharStarts.length; i++) {
+                        if (
+                            wordCharStarts[i] <= ci &&
+                            (i + 1 >= wordCharStarts.length ||
+                                wordCharStarts[i + 1] > ci)
+                        ) {
+                            boundaryCount = i;
+                            highlightWord(i);
+                            boundaryCount = i + 1;
+                            break;
+                        }
                     }
                 }
             };
 
-            utter.onend = () => setTimeout(cleanupReading, 400);
-            utter.onerror = () => cleanupReading();
+            utter.onend = () => {
+                stopFallbackLoop();
+                setTimeout(cleanupReading, 400);
+            };
+            utter.onerror = () => {
+                stopFallbackLoop();
+                cleanupReading();
+            };
 
             window.speechSynthesis.speak(utter);
         }
@@ -612,20 +709,18 @@
             chrome.storage.sync.get(
                 { speechVoice: "", speechRate: 0.95 },
                 (data) => {
-                    utter.rate = data.speechRate;
+                    let voice = null;
                     if (data.speechVoice) {
                         const voices = window.speechSynthesis.getVoices();
-                        const matched = voices.find(
-                            (v) => v.name === data.speechVoice,
-                        );
-                        if (matched) utter.voice = matched;
+                        voice =
+                            voices.find((v) => v.name === data.speechVoice) ||
+                            null;
                     }
-                    setupAndSpeak();
+                    configAndSpeak(data.speechRate, voice);
                 },
             );
         } else {
-            utter.rate = 0.95;
-            setupAndSpeak();
+            configAndSpeak(0.95, null);
         }
     }
 
