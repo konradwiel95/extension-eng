@@ -19,35 +19,76 @@
     const SVG_SAVE = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>`;
     const SVG_SAVE_CHECK = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="#4ecdc4" stroke="#4ecdc4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>`;
 
+    const SVG_READ = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>`;
+
     // ── CSS injection ──────────────────────────────────────────────
     const style = document.createElement("style");
     style.textContent = `
-    /* ── Translate icon button ── */
+    /* ── Icon toolbar (2 buttons) ── */
     #${ICON_ID} {
       position: absolute;
       z-index: 2147483647;
-      width: 34px; height: 34px;
-      display: flex; align-items: center; justify-content: center;
-      border-radius: 12px;
-      background: rgba(74, 108, 247, 0.85);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
-      color: #fff;
-      cursor: pointer;
-      box-shadow: 0 4px 16px rgba(74,108,247,0.35), 0 0 0 1px rgba(255,255,255,0.1) inset;
+      display: flex; align-items: center; gap: 3px;
+      padding: 3px;
+      border-radius: 14px;
+      background: rgba(15, 15, 35, 0.8);
+      backdrop-filter: blur(20px) saturate(1.4);
+      -webkit-backdrop-filter: blur(20px) saturate(1.4);
+      box-shadow: 0 8px 32px rgba(0,0,0,0.35), 0 0 0 1px rgba(255,255,255,0.08) inset;
+      border: 1px solid rgba(255,255,255,0.1);
       opacity: 0; transform: scale(0.6);
       transition: opacity .18s ease, transform .18s cubic-bezier(.34,1.56,.64,1);
       pointer-events: auto;
-      border: 1px solid rgba(255,255,255,0.15);
-      padding: 0;
     }
     #${ICON_ID}.visible {
       opacity: 1; transform: scale(1);
     }
-    #${ICON_ID}:hover {
-      background: rgba(59, 93, 231, 0.95);
-      transform: scale(1.1);
-      box-shadow: 0 6px 24px rgba(74,108,247,0.45), 0 0 0 1px rgba(255,255,255,0.15) inset;
+    .${PREFIX}tb-btn {
+      width: 34px; height: 34px;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 10px;
+      color: #fff;
+      cursor: pointer;
+      border: 1px solid rgba(255,255,255,0.1);
+      padding: 0;
+      transition: all .2s ease;
+    }
+    .${PREFIX}tb-translate {
+      background: rgba(74, 108, 247, 0.55);
+    }
+    .${PREFIX}tb-translate:hover {
+      background: rgba(74, 108, 247, 0.85);
+      transform: scale(1.08);
+      box-shadow: 0 4px 12px rgba(74,108,247,0.35);
+    }
+    .${PREFIX}tb-read {
+      background: rgba(78, 205, 196, 0.4);
+    }
+    .${PREFIX}tb-read:hover {
+      background: rgba(78, 205, 196, 0.7);
+      transform: scale(1.08);
+      box-shadow: 0 4px 12px rgba(78,205,196,0.3);
+    }
+    .${PREFIX}tb-read.reading {
+      background: rgba(78, 205, 196, 0.8);
+      animation: ${PREFIX}pulse 1.5s ease-in-out infinite;
+    }
+    @keyframes ${PREFIX}pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(78,205,196,0.4); }
+      50% { box-shadow: 0 0 0 6px rgba(78,205,196,0); }
+    }
+
+    /* ── Word highlight for read-aloud ── */
+    .${PREFIX}word-hl {
+      transition: background .12s ease, box-shadow .12s ease, color .12s ease;
+      border-radius: 3px;
+      padding: 1px 0;
+    }
+    .${PREFIX}word-active {
+      background: rgba(78, 205, 196, 0.3) !important;
+      box-shadow: 0 0 12px rgba(78, 205, 196, 0.25);
+      color: inherit;
+      border-radius: 3px;
     }
 
     /* ── Tooltip panel ── */
@@ -219,8 +260,10 @@
     let tooltipEl = null;
     let currentText = "";
     let currentRect = null;
+    let currentRange = null;
     let lastMouseX = 0;
     let lastMouseY = 0;
+    let isReading = false;
 
     // Track mouse position for smart icon placement
     document.addEventListener("mousemove", (e) => {
@@ -233,10 +276,22 @@
         if (iconEl) return iconEl;
         iconEl = document.createElement("div");
         iconEl.id = ICON_ID;
-        iconEl.innerHTML = SVG_TRANSLATE;
-        iconEl.title = "Przetłumacz";
+
+        const translateBtn = document.createElement("button");
+        translateBtn.className = `${PREFIX}tb-btn ${PREFIX}tb-translate`;
+        translateBtn.innerHTML = SVG_TRANSLATE;
+        translateBtn.title = "Przetłumacz";
+        translateBtn.addEventListener("click", onIconClick);
+
+        const readBtn = document.createElement("button");
+        readBtn.className = `${PREFIX}tb-btn ${PREFIX}tb-read`;
+        readBtn.innerHTML = SVG_READ;
+        readBtn.title = "Czytaj na głos";
+        readBtn.addEventListener("click", onReadClick);
+
+        iconEl.appendChild(translateBtn);
+        iconEl.appendChild(readBtn);
         document.body.appendChild(iconEl);
-        iconEl.addEventListener("click", onIconClick);
         return iconEl;
     }
 
@@ -246,12 +301,13 @@
 
         const scrollX = window.scrollX;
         const scrollY = window.scrollY;
-        const ICON_SIZE = 34;
+        const ICON_W = 79;
+        const ICON_H = 42;
         const GAP = 8;
         const vpW = document.documentElement.clientWidth;
         const vpH = document.documentElement.clientHeight;
 
-        // Mouse position in page coords
+        // Mouse position in viewport coords
         const mx = lastMouseX;
         const my = lastMouseY;
 
@@ -264,12 +320,12 @@
         // Try positions in order: right of mouse, left of mouse, below, above
         // Always avoid overlapping the selected text rect
         let bestX = mx + GAP;
-        let bestY = my - ICON_SIZE / 2;
+        let bestY = my - ICON_H / 2;
 
-        // Check if icon at (bestX, bestY) overlaps selection
+        // Check if toolbar at (ix, iy) overlaps selection
         function overlapsSelection(ix, iy) {
-            const iconRight = ix + ICON_SIZE;
-            const iconBottom = iy + ICON_SIZE;
+            const iconRight = ix + ICON_W;
+            const iconBottom = iy + ICON_H;
             return !(
                 ix > selRight ||
                 iconRight < selLeft ||
@@ -279,41 +335,35 @@
         }
 
         // Strategy 1: Right of mouse, vertically centered on mouse
-        if (bestX + ICON_SIZE <= vpW && !overlapsSelection(bestX, bestY)) {
+        if (bestX + ICON_W <= vpW && !overlapsSelection(bestX, bestY)) {
             // good
         }
         // Strategy 2: Left of mouse
         else if (
-            mx - GAP - ICON_SIZE >= 0 &&
-            !overlapsSelection(mx - GAP - ICON_SIZE, bestY)
+            mx - GAP - ICON_W >= 0 &&
+            !overlapsSelection(mx - GAP - ICON_W, bestY)
         ) {
-            bestX = mx - GAP - ICON_SIZE;
+            bestX = mx - GAP - ICON_W;
         }
         // Strategy 3: Below selection, horizontally near mouse
-        else if (selBottom + GAP + ICON_SIZE <= vpH) {
-            bestX = Math.max(
-                4,
-                Math.min(mx - ICON_SIZE / 2, vpW - ICON_SIZE - 4),
-            );
+        else if (selBottom + GAP + ICON_H <= vpH) {
+            bestX = Math.max(4, Math.min(mx - ICON_W / 2, vpW - ICON_W - 4));
             bestY = selBottom + GAP;
         }
         // Strategy 4: Above selection
-        else if (selTop - GAP - ICON_SIZE >= 0) {
-            bestX = Math.max(
-                4,
-                Math.min(mx - ICON_SIZE / 2, vpW - ICON_SIZE - 4),
-            );
-            bestY = selTop - GAP - ICON_SIZE;
+        else if (selTop - GAP - ICON_H >= 0) {
+            bestX = Math.max(4, Math.min(mx - ICON_W / 2, vpW - ICON_W - 4));
+            bestY = selTop - GAP - ICON_H;
         }
         // Fallback: right of selection
         else {
             bestX = selRight + GAP;
-            bestY = selTop + (rect.height - ICON_SIZE) / 2;
+            bestY = selTop + (rect.height - ICON_H) / 2;
         }
 
         // Clamp to viewport
-        bestX = Math.max(4, Math.min(bestX, vpW - ICON_SIZE - 4));
-        bestY = Math.max(4, Math.min(bestY, vpH - ICON_SIZE - 4));
+        bestX = Math.max(4, Math.min(bestX, vpW - ICON_W - 4));
+        bestY = Math.max(4, Math.min(bestY, vpH - ICON_H - 4));
 
         icon.style.left = `${bestX + scrollX}px`;
         icon.style.top = `${bestY + scrollY}px`;
@@ -384,6 +434,199 @@
     function hideAll() {
         hideIcon();
         hideTooltip();
+        if (isReading) cleanupReading();
+    }
+
+    // ── Read-aloud with word highlighting ──────────────────────────
+    function cleanupReading() {
+        window.speechSynthesis.cancel();
+        isReading = false;
+        // Remove word highlight spans, restore original text
+        document.querySelectorAll(`.${PREFIX}word-hl`).forEach((span) => {
+            const parent = span.parentNode;
+            if (parent) {
+                parent.replaceChild(
+                    document.createTextNode(span.textContent),
+                    span,
+                );
+                parent.normalize();
+            }
+        });
+        // Remove reading state from read button
+        if (iconEl) {
+            const rb = iconEl.querySelector(`.${PREFIX}tb-read`);
+            if (rb) rb.classList.remove("reading");
+        }
+    }
+
+    function getTextNodesInRange(range) {
+        const result = [];
+        const container = range.commonAncestorContainer;
+        const root =
+            container.nodeType === 3 ? container.parentNode : container;
+
+        if (
+            container.nodeType === 3 &&
+            range.startContainer === range.endContainer
+        ) {
+            result.push({
+                node: container,
+                start: range.startOffset,
+                end: range.endOffset,
+            });
+            return result;
+        }
+
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        while (walker.nextNode()) {
+            const node = walker.currentNode;
+            try {
+                if (!range.intersectsNode(node)) continue;
+            } catch {
+                continue;
+            }
+            if (!node.textContent) continue;
+
+            let start = 0;
+            let end = node.textContent.length;
+            if (node === range.startContainer) start = range.startOffset;
+            if (node === range.endContainer) end = range.endOffset;
+            if (start < end) result.push({ node, start, end });
+        }
+        return result;
+    }
+
+    function wrapWordsInSelection(range) {
+        const textNodeInfos = getTextNodesInRange(range);
+        const wordSpans = [];
+
+        for (const { node, start, end } of textNodeInfos) {
+            const fullText = node.textContent;
+            const selectedText = fullText.substring(start, end);
+            if (!selectedText.trim()) continue;
+
+            const fragment = document.createDocumentFragment();
+            const before = fullText.substring(0, start);
+            const after = fullText.substring(end);
+
+            if (before) fragment.appendChild(document.createTextNode(before));
+
+            // Split into words and whitespace preserving order
+            const parts = selectedText.match(/\S+|\s+/g) || [];
+            for (const part of parts) {
+                if (/\S/.test(part)) {
+                    const span = document.createElement("span");
+                    span.className = `${PREFIX}word-hl`;
+                    span.textContent = part;
+                    fragment.appendChild(span);
+                    wordSpans.push(span);
+                } else {
+                    fragment.appendChild(document.createTextNode(part));
+                }
+            }
+
+            if (after) fragment.appendChild(document.createTextNode(after));
+
+            node.parentNode.replaceChild(fragment, node);
+        }
+        return wordSpans;
+    }
+
+    function onReadClick(e) {
+        e.stopPropagation();
+        e.preventDefault();
+
+        // Toggle off if already reading
+        if (isReading) {
+            cleanupReading();
+            return;
+        }
+
+        if (!currentText || !currentRange) return;
+
+        const text = currentText;
+        const range = currentRange;
+
+        isReading = true;
+        hideIcon();
+
+        // Mark read button as active
+        if (iconEl) {
+            const rb = iconEl.querySelector(`.${PREFIX}tb-read`);
+            if (rb) rb.classList.add("reading");
+        }
+
+        // Wrap words in highlight spans
+        const wordSpans = wrapWordsInSelection(range);
+        if (wordSpans.length === 0) {
+            cleanupReading();
+            return;
+        }
+
+        // Compute word positions (char offsets) in text
+        const wordPositions = [];
+        const regex = /\S+/g;
+        let m;
+        while ((m = regex.exec(text)) !== null) {
+            wordPositions.push({
+                start: m.index,
+                end: m.index + m[0].length,
+            });
+        }
+
+        // Detect language from page
+        const pageLang =
+            document.documentElement.lang || navigator.language || "en";
+
+        window.speechSynthesis.cancel();
+        const utter = new SpeechSynthesisUtterance(text);
+        utter.lang = pageLang;
+
+        function setupAndSpeak() {
+            utter.onboundary = (ev) => {
+                if (ev.name === "word") {
+                    const idx = wordPositions.findIndex(
+                        (w) => w.start === ev.charIndex,
+                    );
+                    if (idx >= 0 && idx < wordSpans.length) {
+                        wordSpans.forEach((s) =>
+                            s.classList.remove(`${PREFIX}word-active`),
+                        );
+                        wordSpans[idx].classList.add(`${PREFIX}word-active`);
+                        wordSpans[idx].scrollIntoView({
+                            behavior: "smooth",
+                            block: "nearest",
+                            inline: "nearest",
+                        });
+                    }
+                }
+            };
+
+            utter.onend = () => setTimeout(cleanupReading, 400);
+            utter.onerror = () => cleanupReading();
+
+            window.speechSynthesis.speak(utter);
+        }
+
+        if (chrome?.storage?.sync) {
+            chrome.storage.sync.get(
+                { speechVoice: "", speechRate: 0.95 },
+                (data) => {
+                    utter.rate = data.speechRate;
+                    if (data.speechVoice) {
+                        const voices = window.speechSynthesis.getVoices();
+                        const matched = voices.find(
+                            (v) => v.name === data.speechVoice,
+                        );
+                        if (matched) utter.voice = matched;
+                    }
+                    setupAndSpeak();
+                },
+            );
+        } else {
+            utter.rate = 0.95;
+            setupAndSpeak();
+        }
     }
 
     // ── Google Translate (free, no key) ────────────────────────────
@@ -586,6 +829,7 @@
 
             currentText = text;
             currentRect = rect;
+            currentRange = range.cloneRange();
 
             hideTooltip();
             showIcon(rect);
