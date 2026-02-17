@@ -6,7 +6,7 @@
     "permissions": ["storage"],
     "action": {
         "default_popup": "popup.html",
-        "default_title": "Quick Translator – Settings"
+        "default_title": "Quick Translator - Settings"
     },
     "icons": {
         "48": "icon48.png",
