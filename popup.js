@@ -23,16 +23,81 @@ document.querySelectorAll(".tab").forEach((tab) => {
     });
 });
 
+// ── Voice & pitch elements ────────────────────────────────────────
+const voiceSelect = document.getElementById("voiceSelect");
+const pitchRange = document.getElementById("pitchRange");
+const pitchValue = document.getElementById("pitchValue");
+const rateRange = document.getElementById("rateRange");
+const rateValue = document.getElementById("rateValue");
+
+// ── Flash saved message ───────────────────────────────────────────
+function flashSaved() {
+    savedMsg.classList.add("show");
+    setTimeout(() => savedMsg.classList.remove("show"), 1500);
+}
+
 // ── Settings: load & save language ────────────────────────────────
-chrome.storage.sync.get({ targetLang: "pl" }, (data) => {
-    select.value = data.targetLang;
-});
+chrome.storage.sync.get(
+    { targetLang: "pl", speechVoice: "", speechPitch: 1, speechRate: 0.95 },
+    (data) => {
+        select.value = data.targetLang;
+        pitchRange.value = data.speechPitch;
+        pitchValue.textContent = parseFloat(data.speechPitch).toFixed(1);
+        rateRange.value = data.speechRate;
+        rateValue.textContent = parseFloat(data.speechRate).toFixed(2);
+        // Load voices and set selection
+        loadVoices(data.speechVoice);
+    },
+);
 
 select.addEventListener("change", () => {
-    chrome.storage.sync.set({ targetLang: select.value }, () => {
-        savedMsg.classList.add("show");
-        setTimeout(() => savedMsg.classList.remove("show"), 1500);
+    chrome.storage.sync.set({ targetLang: select.value }, flashSaved);
+});
+
+// ── Populate voices ───────────────────────────────────────────────
+function loadVoices(selectedVoice) {
+    const voices = window.speechSynthesis.getVoices();
+    voiceSelect.innerHTML = '<option value="">🔊 Domyślny</option>';
+    voices.forEach((v) => {
+        const opt = document.createElement("option");
+        opt.value = v.name;
+        opt.textContent = `${v.name} (${v.lang})`;
+        if (v.name === selectedVoice) opt.selected = true;
+        voiceSelect.appendChild(opt);
     });
+}
+
+// Voices may load async
+window.speechSynthesis.onvoiceschanged = () => {
+    chrome.storage.sync.get({ speechVoice: "" }, (data) => {
+        loadVoices(data.speechVoice);
+    });
+};
+
+voiceSelect.addEventListener("change", () => {
+    chrome.storage.sync.set({ speechVoice: voiceSelect.value }, flashSaved);
+});
+
+// ── Pitch slider ──────────────────────────────────────────────────
+pitchRange.addEventListener("input", () => {
+    pitchValue.textContent = parseFloat(pitchRange.value).toFixed(1);
+});
+pitchRange.addEventListener("change", () => {
+    chrome.storage.sync.set(
+        { speechPitch: parseFloat(pitchRange.value) },
+        flashSaved,
+    );
+});
+
+// ── Rate slider ───────────────────────────────────────────────────
+rateRange.addEventListener("input", () => {
+    rateValue.textContent = parseFloat(rateRange.value).toFixed(2);
+});
+rateRange.addEventListener("change", () => {
+    chrome.storage.sync.set(
+        { speechRate: parseFloat(rateRange.value) },
+        flashSaved,
+    );
 });
 
 // ── Filter state ──────────────────────────────────────────────────

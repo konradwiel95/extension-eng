@@ -130,28 +130,70 @@
       to { transform: rotate(360deg); }
     }
 
-    /* ── Save button ── */
+    /* ── Save button (icon-only in header) ── */
     .${PREFIX}save-btn {
-      display: flex; align-items: center; gap: 6px;
-      margin-top: 8px; padding: 6px 12px;
-      background: rgba(255,255,255,0.07);
-      border: 1px solid rgba(255,255,255,0.12);
-      border-radius: 6px;
-      color: rgba(255,255,255,0.6);
-      font-size: 12px; cursor: pointer;
-      transition: all .15s ease;
-      width: 100%;
-      justify-content: center;
+      display: flex; align-items: center; justify-content: center;
+      background: none; border: none;
+      color: rgba(255,255,255,0.4);
+      cursor: pointer; padding: 2px; border-radius: 4px;
+      transition: color .15s, background .15s, transform .15s;
+      flex-shrink: 0;
     }
     .${PREFIX}save-btn:hover {
-      background: rgba(255,255,255,0.12);
       color: #fff;
-      border-color: rgba(255,255,255,0.2);
+      background: rgba(255,255,255,0.1);
+      transform: scale(1.15);
     }
     .${PREFIX}save-btn.saved {
       color: #4ecdc4;
-      border-color: rgba(78,205,196,0.3);
-      background: rgba(78,205,196,0.08);
+    }
+
+    /* ── YouTube CC subtitle click-to-translate ── */
+    .ytp-caption-segment.${PREFIX}clickable {
+      cursor: pointer !important;
+      border-radius: 3px;
+      transition: background .15s ease, box-shadow .15s ease;
+      position: relative;
+    }
+    .ytp-caption-segment.${PREFIX}clickable:hover {
+      background: rgba(74, 108, 247, 0.45) !important;
+      box-shadow: 0 0 0 3px rgba(74, 108, 247, 0.3);
+    }
+    .ytp-caption-segment.${PREFIX}clickable::after {
+      content: '⟶';
+      position: absolute;
+      right: -20px;
+      top: 50%;
+      transform: translateY(-50%);
+      font-size: 12px;
+      color: rgba(74, 108, 247, 0.8);
+      opacity: 0;
+      transition: opacity .15s ease;
+      pointer-events: none;
+    }
+    .ytp-caption-segment.${PREFIX}clickable:hover::after {
+      opacity: 1;
+    }
+
+    /* YouTube subtitle tooltip adjustments */
+    .${PREFIX}yt-sub-hint {
+      position: fixed;
+      z-index: 2147483647;
+      bottom: 90px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(74, 108, 247, 0.9);
+      color: #fff;
+      font-size: 12px;
+      padding: 6px 14px;
+      border-radius: 20px;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity .4s ease;
+      white-space: nowrap;
+    }
+    .${PREFIX}yt-sub-hint.visible {
+      opacity: 1;
     }
   `;
     document.head.appendChild(style);
@@ -273,9 +315,32 @@
         window.speechSynthesis.cancel();
         const utter = new SpeechSynthesisUtterance(text);
         utter.lang = lang;
-        utter.rate = 0.95;
-        window.speechSynthesis.speak(utter);
-        return utter;
+
+        // Apply stored voice/pitch/rate settings
+        return new Promise((resolve) => {
+            if (chrome?.storage?.sync) {
+                chrome.storage.sync.get(
+                    { speechVoice: "", speechPitch: 1, speechRate: 0.95 },
+                    (data) => {
+                        utter.pitch = data.speechPitch;
+                        utter.rate = data.speechRate;
+                        if (data.speechVoice) {
+                            const voices = window.speechSynthesis.getVoices();
+                            const match = voices.find(
+                                (v) => v.name === data.speechVoice,
+                            );
+                            if (match) utter.voice = match;
+                        }
+                        window.speechSynthesis.speak(utter);
+                        resolve(utter);
+                    },
+                );
+            } else {
+                utter.rate = 0.95;
+                window.speechSynthesis.speak(utter);
+                resolve(utter);
+            }
+        });
     }
 
     // ── Target language from settings ──────────────────────────────
@@ -348,6 +413,7 @@
             const html = `
                 <div class="${PREFIX}header">
                     <span>${langTag(srcLang)} → ${langTag(targetLang)}</span>
+                    <button class="${PREFIX}save-btn" data-src="${escapeAttr(text)}" data-translated="${escapeAttr(translated)}" data-src-lang="${escapeAttr(srcLang)}" data-tgt-lang="${escapeAttr(targetLang)}" title="Zapisz do kolekcji">${SVG_SAVE}</button>
                 </div>
                 <div class="${PREFIX}body">
                     <div class="${PREFIX}row">
@@ -360,9 +426,6 @@
                         <span class="${PREFIX}text ${PREFIX}translated">${escapeHtml(translated)}</span>
                         <button class="${PREFIX}speak" data-text="${escapeAttr(translated)}" data-lang="${escapeAttr(targetLang)}" title="Odczytaj tłumaczenie">${SVG_SPEAKER}</button>
                     </div>
-                    <button class="${PREFIX}save-btn" data-src="${escapeAttr(text)}" data-translated="${escapeAttr(translated)}" data-src-lang="${escapeAttr(srcLang)}" data-tgt-lang="${escapeAttr(targetLang)}" title="Zapisz do kolekcji">
-                        ${SVG_SAVE} <span>Zapisz</span>
-                    </button>
                 </div>`;
 
             showTooltip(html, rect);
@@ -374,9 +437,10 @@
                     const t = btn.getAttribute("data-text");
                     const l = btn.getAttribute("data-lang");
                     btn.classList.add("speaking");
-                    const utter = speak(t, l);
-                    utter.onend = () => btn.classList.remove("speaking");
-                    utter.onerror = () => btn.classList.remove("speaking");
+                    speak(t, l).then((utter) => {
+                        utter.onend = () => btn.classList.remove("speaking");
+                        utter.onerror = () => btn.classList.remove("speaking");
+                    });
                 });
             });
 
@@ -394,7 +458,7 @@
                         timestamp: Date.now(),
                         downloaded: false,
                     });
-                    saveBtn.innerHTML = `${SVG_SAVE_CHECK} <span>Zapisano!</span>`;
+                    saveBtn.innerHTML = SVG_SAVE_CHECK;
                     saveBtn.classList.add("saved");
                 });
             }
@@ -476,5 +540,346 @@
             .replace(/"/g, "&quot;")
             .replace(/</g, "&lt;")
             .replace(/>/g, "&gt;");
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // ── YouTube CC Subtitle Click-to-Translate ────────────────────
+    // ══════════════════════════════════════════════════════════════
+
+    const isYouTube = window.location.hostname.includes("youtube.com");
+
+    if (isYouTube) {
+        let ytHintEl = null;
+        let ytHintTimer = null;
+
+        function showYTHint(msg) {
+            if (!ytHintEl) {
+                ytHintEl = document.createElement("div");
+                ytHintEl.className = `${PREFIX}yt-sub-hint`;
+                document.body.appendChild(ytHintEl);
+            }
+            ytHintEl.textContent = msg;
+            ytHintEl.classList.add("visible");
+            clearTimeout(ytHintTimer);
+            ytHintTimer = setTimeout(() => {
+                ytHintEl.classList.remove("visible");
+            }, 3000);
+        }
+
+        // Translation cache to avoid repeated API calls on hover
+        let ytTranslateCache = new Map();
+        let ytHoverTimer = null;
+        let ytIsHovering = false;
+        let ytWasPlayingBeforeHover = false;
+
+        async function cachedTranslate(text, targetLang) {
+            const key = `${text}|${targetLang}`;
+            if (ytTranslateCache.has(key)) return ytTranslateCache.get(key);
+            const result = await googleTranslate(text, targetLang);
+            ytTranslateCache.set(key, result);
+            if (ytTranslateCache.size > 200) {
+                const first = ytTranslateCache.keys().next().value;
+                ytTranslateCache.delete(first);
+            }
+            return result;
+        }
+
+        // Build tooltip HTML
+        function buildYTTooltipHtml(
+            srcLang,
+            targetLang,
+            original,
+            translated,
+            fullLine,
+            fullTranslated,
+        ) {
+            let fullLineHtml = "";
+            if (fullLine && fullTranslated) {
+                fullLineHtml = `
+                    <div class="${PREFIX}row" style="margin-top:6px; padding-top:8px; border-top:1px solid rgba(255,255,255,0.1);">
+                        <span class="${PREFIX}label">ALL</span>
+                        <span class="${PREFIX}text ${PREFIX}original" style="font-size:12px;">${escapeHtml(fullLine)}</span>
+                    </div>
+                    <div class="${PREFIX}row">
+                        <span class="${PREFIX}label"></span>
+                        <span class="${PREFIX}text ${PREFIX}translated" style="font-size:12px;">${escapeHtml(fullTranslated)}</span>
+                    </div>`;
+            }
+            return `
+                <div class="${PREFIX}header">
+                    <span>${langTag(srcLang)} → ${langTag(targetLang)}</span>
+                    <button class="${PREFIX}save-btn" data-src="${escapeAttr(original)}" data-translated="${escapeAttr(translated)}" data-src-lang="${escapeAttr(srcLang)}" data-tgt-lang="${escapeAttr(targetLang)}" title="Zapisz do kolekcji">${SVG_SAVE}</button>
+                </div>
+                <div class="${PREFIX}body">
+                    <div class="${PREFIX}row">
+                        <span class="${PREFIX}label">${langTag(srcLang)}</span>
+                        <span class="${PREFIX}text ${PREFIX}original">${escapeHtml(original)}</span>
+                        <button class="${PREFIX}speak" data-text="${escapeAttr(original)}" data-lang="${escapeAttr(srcLang)}" title="Odczytaj oryginał">${SVG_SPEAKER}</button>
+                    </div>
+                    <div class="${PREFIX}row">
+                        <span class="${PREFIX}label">${langTag(targetLang)}</span>
+                        <span class="${PREFIX}text ${PREFIX}translated">${escapeHtml(translated)}</span>
+                        <button class="${PREFIX}speak" data-text="${escapeAttr(translated)}" data-lang="${escapeAttr(targetLang)}" title="Odczytaj tłumaczenie">${SVG_SPEAKER}</button>
+                    </div>
+                    ${fullLineHtml}
+                </div>`;
+        }
+
+        // Attach TTS + save handlers to tooltip buttons
+        function attachYTTooltipHandlers() {
+            if (!tooltipEl) return;
+            tooltipEl.querySelectorAll(`.${PREFIX}speak`).forEach((btn) => {
+                btn.addEventListener("click", (ev) => {
+                    ev.stopPropagation();
+                    const t = btn.getAttribute("data-text");
+                    const l = btn.getAttribute("data-lang");
+                    btn.classList.add("speaking");
+                    speak(t, l).then((utter) => {
+                        utter.onend = () => btn.classList.remove("speaking");
+                        utter.onerror = () => btn.classList.remove("speaking");
+                    });
+                });
+            });
+            const saveBtn = tooltipEl.querySelector(`.${PREFIX}save-btn`);
+            if (saveBtn) {
+                saveBtn.addEventListener("click", (ev) => {
+                    ev.stopPropagation();
+                    saveWord({
+                        original: saveBtn.getAttribute("data-src"),
+                        translated: saveBtn.getAttribute("data-translated"),
+                        srcLang: saveBtn.getAttribute("data-src-lang"),
+                        tgtLang: saveBtn.getAttribute("data-tgt-lang"),
+                        url: window.location.href,
+                        timestamp: Date.now(),
+                        downloaded: false,
+                    });
+                    saveBtn.innerHTML = SVG_SAVE_CHECK;
+                    saveBtn.classList.add("saved");
+                });
+            }
+        }
+
+        // Make subtitle segment interactive: HOVER = translate, CLICK = speak + full sentence
+        function makeSubtitleClickable(el) {
+            if (el.dataset[PREFIX + "bound"]) return;
+            el.dataset[PREFIX + "bound"] = "1";
+            el.classList.add(`${PREFIX}clickable`);
+
+            // ── HOVER → translate fragment ──
+            el.addEventListener("mouseenter", async () => {
+                ytIsHovering = true;
+                clearTimeout(ytHoverTimer);
+
+                // Pause video on hover
+                const video = document.querySelector("video");
+                if (video && !video.paused) {
+                    ytWasPlayingBeforeHover = true;
+                    video.pause();
+                }
+
+                const word = el.textContent.trim();
+                if (!word) return;
+
+                const rect = el.getBoundingClientRect();
+                currentText = word;
+                currentRect = rect;
+
+                // Debounce 250ms to avoid flicker
+                ytHoverTimer = setTimeout(async () => {
+                    if (!ytIsHovering) return;
+
+                    showTooltip(
+                        `<div class="${PREFIX}loading"><div class="${PREFIX}spinner"></div> Tłumaczę…</div>`,
+                        rect,
+                    );
+
+                    try {
+                        const targetLang = await getTargetLang();
+                        const { translated, detectedLang } =
+                            await cachedTranslate(word, targetLang);
+                        const srcLang =
+                            typeof detectedLang === "string"
+                                ? detectedLang
+                                : "auto";
+
+                        if (!ytIsHovering) return;
+
+                        const html = buildYTTooltipHtml(
+                            srcLang,
+                            targetLang,
+                            word,
+                            translated,
+                            null,
+                            null,
+                        );
+                        showTooltip(html, rect);
+                        attachYTTooltipHandlers();
+                    } catch (err) {
+                        console.error("[Quick Translator – YT CC hover]", err);
+                        showTooltip(
+                            `<div class="${PREFIX}error">⚠ ${escapeHtml(err.message)}</div>`,
+                            rect,
+                        );
+                    }
+                }, 250);
+            });
+
+            el.addEventListener("mouseleave", () => {
+                ytIsHovering = false;
+                clearTimeout(ytHoverTimer);
+                // Delay hiding so user can interact with tooltip
+                setTimeout(() => {
+                    if (!ytIsHovering && !tooltipEl?.matches(":hover")) {
+                        hideTooltip();
+                        // Resume video if it was playing before hover
+                        if (ytWasPlayingBeforeHover) {
+                            ytWasPlayingBeforeHover = false;
+                            const video = document.querySelector("video");
+                            if (video && video.paused) video.play();
+                        }
+                    }
+                }, 400);
+            });
+
+            // ── CLICK → speak fragment + translate full sentence ──
+            el.addEventListener("click", async (e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                ytIsHovering = true; // keep tooltip visible
+                clearTimeout(ytHoverTimer);
+
+                const clickedWord = el.textContent.trim();
+                if (!clickedWord) return;
+
+                // Gather full line from all segments
+                const container =
+                    el.closest(".captions-text") ||
+                    el.closest(".ytp-caption-window-container") ||
+                    el.parentElement;
+                const segments = container
+                    ? container.querySelectorAll(".ytp-caption-segment")
+                    : [el];
+                const fullLine = Array.from(segments)
+                    .map((s) => s.textContent)
+                    .join(" ")
+                    .trim();
+
+                // Pause the video
+                const video = document.querySelector("video");
+                const wasPlaying = video && !video.paused;
+                if (wasPlaying) video.pause();
+
+                const rect = el.getBoundingClientRect();
+                currentText = clickedWord;
+                currentRect = rect;
+
+                try {
+                    const targetLang = await getTargetLang();
+                    const { translated: wordTranslated, detectedLang } =
+                        await cachedTranslate(clickedWord, targetLang);
+                    const srcLang =
+                        typeof detectedLang === "string"
+                            ? detectedLang
+                            : "auto";
+
+                    // Speak the clicked fragment immediately
+                    speak(clickedWord, srcLang);
+
+                    // Show loading for full sentence
+                    showTooltip(
+                        `<div class="${PREFIX}loading"><div class="${PREFIX}spinner"></div> Tłumaczę całe zdanie…</div>`,
+                        rect,
+                    );
+
+                    // Translate full line
+                    let fullTranslated = null;
+                    const showFullLine = fullLine && fullLine !== clickedWord;
+                    if (showFullLine) {
+                        const result = await cachedTranslate(
+                            fullLine,
+                            targetLang,
+                        );
+                        fullTranslated = result.translated;
+                    }
+
+                    const html = buildYTTooltipHtml(
+                        srcLang,
+                        targetLang,
+                        clickedWord,
+                        wordTranslated,
+                        showFullLine ? fullLine : null,
+                        fullTranslated,
+                    );
+
+                    showTooltip(html, rect);
+                    attachYTTooltipHandlers();
+                } catch (err) {
+                    console.error("[Quick Translator – YT CC click]", err);
+                    showTooltip(
+                        `<div class="${PREFIX}error">⚠ ${escapeHtml(err.message)}</div>`,
+                        rect,
+                    );
+                }
+            });
+        }
+
+        // Observe DOM for subtitle elements appearing
+        function observeSubtitles() {
+            const observer = new MutationObserver((mutations) => {
+                for (const mutation of mutations) {
+                    for (const node of mutation.addedNodes) {
+                        if (node.nodeType !== 1) continue;
+                        // Direct match
+                        if (node.classList?.contains("ytp-caption-segment")) {
+                            makeSubtitleClickable(node);
+                        }
+                        // Children match
+
+                        const segments =
+                            node.querySelectorAll?.(".ytp-caption-segment") ||
+                            [];
+                        segments.forEach(makeSubtitleClickable);
+                    }
+                }
+            });
+
+            observer.observe(document.body, {
+                childList: true,
+                subtree: true,
+            });
+
+            // Also process any subtitles already on the page
+            document
+                .querySelectorAll(".ytp-caption-segment")
+                .forEach(makeSubtitleClickable);
+        }
+
+        // Start observing when YouTube player is ready
+        if (document.readyState === "loading") {
+            document.addEventListener("DOMContentLoaded", () => {
+                observeSubtitles();
+                showYTHint(
+                    "Najedź na napisy CC = tłumaczenie · Kliknij = wymów + całe zdanie ✨",
+                );
+            });
+        } else {
+            observeSubtitles();
+            showYTHint(
+                "Najedź na napisy CC = tłumaczenie · Kliknij = wymów + całe zdanie ✨",
+            );
+        }
+
+        // Re-observe on YouTube SPA navigation
+        let lastUrl = location.href;
+        new MutationObserver(() => {
+            if (location.href !== lastUrl) {
+                lastUrl = location.href;
+                setTimeout(() => {
+                    document
+                        .querySelectorAll(".ytp-caption-segment")
+                        .forEach(makeSubtitleClickable);
+                }, 2000);
+            }
+        }).observe(document.body, { childList: true, subtree: true });
     }
 })();
