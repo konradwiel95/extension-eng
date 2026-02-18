@@ -1352,7 +1352,7 @@
                     if (!ytIsHovering) return;
 
                     showTooltip(
-                        `<div class="${PREFIX}loading"><div class="${PREFIX}spinner"></div> Tłumaczę…</div>`,
+                        `<div class="${PREFIX}loading"><div class="${PREFIX}spinner"></div></div>`,
                         rect,
                     );
 
@@ -1470,7 +1470,7 @@
 
                     // Show loading for full sentence
                     showTooltip(
-                        `<div class="${PREFIX}loading"><div class="${PREFIX}spinner"></div> Tłumaczę całe zdanie…</div>`,
+                        `<div class="${PREFIX}loading"><div class="${PREFIX}spinner"></div></div>`,
                         rect,
                     );
 
@@ -1942,7 +1942,7 @@
                 if (!nfIsHovering) return;
 
                 showTooltip(
-                    `<div class="${PREFIX}loading"><div class="${PREFIX}spinner"></div> Tłumaczę…</div>`,
+                    `<div class="${PREFIX}loading"><div class="${PREFIX}spinner"></div></div>`,
                     rect,
                 );
 
@@ -2053,7 +2053,7 @@
                     speak(clickedWord, srcLang);
 
                     showTooltip(
-                        `<div class="${PREFIX}loading"><div class="${PREFIX}spinner"></div> Tłumaczę całe zdanie…</div>`,
+                        `<div class="${PREFIX}loading"><div class="${PREFIX}spinner"></div></div>`,
                         rect,
                     );
 
@@ -2564,7 +2564,7 @@
                 if (!xIsHovering) return;
 
                 showTooltip(
-                    `<div class="${PREFIX}loading"><div class="${PREFIX}spinner"></div> Tłumaczę…</div>`,
+                    `<div class="${PREFIX}loading"><div class="${PREFIX}spinner"></div></div>`,
                     rect,
                 );
 
@@ -2638,7 +2638,7 @@
 
             // Show loading
             showTooltip(
-                `<div class="${PREFIX}loading"><div class="${PREFIX}spinner"></div> Tłumaczę słowo i zdanie…</div>`,
+                `<div class="${PREFIX}loading"><div class="${PREFIX}spinner"></div></div>`,
                 rect,
             );
 
