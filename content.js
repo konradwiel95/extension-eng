@@ -350,6 +350,19 @@
       0%, 100% { transform: scale(1); }
       50% { transform: scale(1.15); }
     }
+    /* X.com word highlight during TTS */
+    .${PREFIX}x-word-hl {
+      transition: background .15s ease, box-shadow .15s ease;
+      border-radius: 4px;
+      padding: 1px 2px;
+      display: inline;
+    }
+    .${PREFIX}x-word-active {
+      background: rgba(78, 205, 196, 0.45) !important;
+      box-shadow: 0 0 18px rgba(78, 205, 196, 0.4), 0 0 4px rgba(78,205,196,0.6) inset;
+      color: #fff !important;
+      border-radius: 4px;
+    }
   `;
     document.head.appendChild(style);
 
@@ -2314,6 +2327,75 @@
         const X_SPEAK_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>`;
 
         let xCurrentSpeakingBtn = null;
+        let xWordSpans = [];
+        let xCurrentWordIdx = -1;
+        let xFallbackRAF = null;
+
+        // Wrap tweet text nodes into per-word highlight spans
+        function xWrapWordsInTweet(article) {
+            const textEl = article.querySelector('[data-testid="tweetText"]');
+            if (!textEl) return [];
+            const spans = [];
+            const walker = document.createTreeWalker(
+                textEl,
+                NodeFilter.SHOW_TEXT,
+            );
+            const textNodes = [];
+            while (walker.nextNode()) textNodes.push(walker.currentNode);
+            for (const node of textNodes) {
+                const text = node.textContent;
+                if (!text.trim()) continue;
+                const frag = document.createDocumentFragment();
+                const parts = text.match(/\S+|\s+/g) || [];
+                for (const part of parts) {
+                    if (/\S/.test(part)) {
+                        const sp = document.createElement("span");
+                        sp.className = `${PREFIX}x-word-hl`;
+                        sp.textContent = part;
+                        frag.appendChild(sp);
+                        spans.push(sp);
+                    } else {
+                        frag.appendChild(document.createTextNode(part));
+                    }
+                }
+                node.parentNode.replaceChild(frag, node);
+            }
+            return spans;
+        }
+
+        // Remove word highlight spans, restore original text
+        function xUnwrapWords(article) {
+            if (!article) return;
+            article.querySelectorAll(`.${PREFIX}x-word-hl`).forEach((sp) => {
+                const parent = sp.parentNode;
+                if (parent) {
+                    parent.replaceChild(
+                        document.createTextNode(sp.textContent),
+                        sp,
+                    );
+                    parent.normalize();
+                }
+            });
+            xWordSpans = [];
+            xCurrentWordIdx = -1;
+        }
+
+        function xHighlightWord(idx) {
+            if (idx < 0 || idx >= xWordSpans.length) return;
+            if (idx === xCurrentWordIdx) return;
+            xCurrentWordIdx = idx;
+            for (let i = 0; i < xWordSpans.length; i++) {
+                if (i === idx) {
+                    xWordSpans[i].classList.add(`${PREFIX}x-word-active`);
+                } else {
+                    xWordSpans[i].classList.remove(`${PREFIX}x-word-active`);
+                }
+            }
+            xWordSpans[idx].scrollIntoView({
+                behavior: "smooth",
+                block: "nearest",
+            });
+        }
 
         // Get the full text content of a tweet article
         function getPostText(article) {
@@ -2331,7 +2413,13 @@
 
         function stopXSpeaking() {
             window.speechSynthesis.cancel();
+            if (xFallbackRAF) {
+                cancelAnimationFrame(xFallbackRAF);
+                xFallbackRAF = null;
+            }
             if (xCurrentSpeakingBtn) {
+                const art = xCurrentSpeakingBtn.closest("article");
+                if (art) xUnwrapWords(art);
                 xCurrentSpeakingBtn.classList.remove(`${PREFIX}x-speaking`);
                 xCurrentSpeakingBtn = null;
             }
@@ -2360,18 +2448,87 @@
             btn.classList.add(`${PREFIX}x-speaking`);
             xCurrentSpeakingBtn = btn;
 
+            // Wrap tweet text into word spans for highlighting
+            xWordSpans = xWrapWordsInTweet(article);
+
+            // Build utterance from word spans to ensure charIndex alignment
+            const utterText = xWordSpans.map((s) => s.textContent).join(" ");
+            const wordCharStarts = [];
+            let off = 0;
+            for (let i = 0; i < xWordSpans.length; i++) {
+                wordCharStarts.push(off);
+                off += xWordSpans[i].textContent.length + 1;
+            }
+
             // Detect language from html lang or default to "en"
             const lang = document.documentElement.lang || "en";
 
             window.speechSynthesis.cancel();
-            const utter = new SpeechSynthesisUtterance(text);
+            const utter = new SpeechSynthesisUtterance(utterText);
             utter.lang = lang;
 
+            let boundaryFired = false;
+            let boundaryCount = 0;
+            let speechStartTime = 0;
+
+            function startFallback() {
+                if (boundaryFired) return;
+                const charsPerSec = 19.2 * (utter.rate || 1);
+                function tick() {
+                    if (boundaryFired) return;
+                    const elapsed =
+                        (performance.now() - speechStartTime) / 1000;
+                    const charPos = elapsed * charsPerSec;
+                    let idx = 0;
+                    for (let i = 0; i < wordCharStarts.length; i++) {
+                        if (charPos >= wordCharStarts[i]) idx = i;
+                        else break;
+                    }
+                    xHighlightWord(idx);
+                    xFallbackRAF = requestAnimationFrame(tick);
+                }
+                xFallbackRAF = requestAnimationFrame(tick);
+            }
+
+            utter.onstart = () => {
+                speechStartTime = performance.now();
+                xHighlightWord(0);
+                setTimeout(() => {
+                    if (!boundaryFired) startFallback();
+                }, 200);
+            };
+
+            utter.onboundary = (ev) => {
+                if (ev.name === "word") {
+                    if (!boundaryFired) {
+                        boundaryFired = true;
+                        if (xFallbackRAF) {
+                            cancelAnimationFrame(xFallbackRAF);
+                            xFallbackRAF = null;
+                        }
+                    }
+                    xHighlightWord(boundaryCount);
+                    boundaryCount++;
+                }
+            };
+
             utter.onend = () => {
-                btn.classList.remove(`${PREFIX}x-speaking`);
-                if (xCurrentSpeakingBtn === btn) xCurrentSpeakingBtn = null;
+                if (xFallbackRAF) {
+                    cancelAnimationFrame(xFallbackRAF);
+                    xFallbackRAF = null;
+                }
+                setTimeout(() => {
+                    xUnwrapWords(article);
+                    btn.classList.remove(`${PREFIX}x-speaking`);
+                    if (xCurrentSpeakingBtn === btn) xCurrentSpeakingBtn = null;
+                }, 300);
             };
             utter.onerror = () => {
+                if (xFallbackRAF) {
+                    cancelAnimationFrame(xFallbackRAF);
+                    xFallbackRAF = null;
+                }
+                xUnwrapWords(article);
                 btn.classList.remove(`${PREFIX}x-speaking`);
                 if (xCurrentSpeakingBtn === btn) xCurrentSpeakingBtn = null;
             };
