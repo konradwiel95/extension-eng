@@ -267,6 +267,43 @@
     .${PREFIX}yt-sub-hint.visible {
       opacity: 1;
     }
+
+    /* ── Netflix CC subtitle click-to-translate ── */
+    .player-timedtext-text-container span.${PREFIX}clickable {
+      position: relative;
+    }
+    .${PREFIX}nf-word {
+      cursor: pointer !important;
+      border-radius: 3px;
+      transition: background .15s ease, box-shadow .15s ease;
+      display: inline;
+      padding: 1px 2px;
+    }
+    .${PREFIX}nf-word.${PREFIX}nf-word-hover {
+      background: rgba(74, 108, 247, 0.45) !important;
+      box-shadow: 0 0 0 3px rgba(74, 108, 247, 0.3);
+    }
+
+    /* Netflix subtitle hint */
+    .${PREFIX}nf-sub-hint {
+      position: fixed;
+      z-index: 2147483647;
+      bottom: 90px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(74, 108, 247, 0.9);
+      color: #fff;
+      font-size: 12px;
+      padding: 6px 14px;
+      border-radius: 20px;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity .4s ease;
+      white-space: nowrap;
+    }
+    .${PREFIX}nf-sub-hint.visible {
+      opacity: 1;
+    }
   `;
     document.head.appendChild(style);
 
@@ -995,6 +1032,14 @@
             .replace(/>/g, "&gt;");
     }
 
+    // Strip [bracketed] content (e.g. [Applause], [Music]) from text
+    function stripBrackets(text) {
+        return text
+            .replace(/\[.*?\]/g, "")
+            .replace(/\s{2,}/g, " ")
+            .trim();
+    }
+
     // ══════════════════════════════════════════════════════════════
     // ── YouTube CC Subtitle Click-to-Translate ────────────────────
     // ══════════════════════════════════════════════════════════════
@@ -1128,14 +1173,6 @@
                 ytTranslateCache.delete(first);
             }
             return result;
-        }
-
-        // Strip [bracketed] content (e.g. [Applause], [Music]) from text
-        function stripBrackets(text) {
-            return text
-                .replace(/\[.*?\]/g, "")
-                .replace(/\s{2,}/g, " ")
-                .trim();
         }
 
         // Build tooltip HTML
@@ -1549,6 +1586,625 @@
                         .querySelectorAll(".ytp-caption-segment")
                         .forEach(makeSubtitleClickable);
                 }, 2000);
+            }
+        }).observe(document.body, { childList: true, subtree: true });
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // ── Netflix CC Subtitle Click-to-Translate ────────────────────
+    // ══════════════════════════════════════════════════════════════
+
+    const isNetflix = window.location.hostname.includes("netflix.com");
+
+    if (isNetflix) {
+        let nfHintEl = null;
+        let nfHintTimer = null;
+
+        function showNFHint(msg) {
+            if (!nfHintEl) {
+                nfHintEl = document.createElement("div");
+                nfHintEl.className = `${PREFIX}nf-sub-hint`;
+                document.body.appendChild(nfHintEl);
+            }
+            nfHintEl.textContent = msg;
+            nfHintEl.classList.add("visible");
+            clearTimeout(nfHintTimer);
+            nfHintTimer = setTimeout(() => {
+                nfHintEl.classList.remove("visible");
+            }, 4000);
+        }
+
+        // Translation cache
+        let nfTranslateCache = new Map();
+        let nfHoverTimer = null;
+        let nfIsHovering = false;
+        let nfWasPlayingBeforeHover = false;
+        let nfClickLocked = false;
+        let nfClickWasPlaying = false;
+
+        // Dismiss click-locked tooltip and resume video
+        function dismissNFClick() {
+            if (!nfClickLocked) return;
+            nfClickLocked = false;
+            hideTooltip();
+            if (nfClickWasPlaying) {
+                nfClickWasPlaying = false;
+                const video = document.querySelector("video");
+                if (video && video.paused) video.play();
+            }
+        }
+
+        // Allow Escape / click-away to dismiss Netflix tooltip too
+        const origYtDismiss = ytDismissClickFn;
+        ytDismissClickFn = () => {
+            if (origYtDismiss) origYtDismiss();
+            dismissNFClick();
+        };
+
+        // ── Subtitle history buffer ──
+        let nfSubtitleBuffer = "";
+        let nfLastSegmentText = "";
+
+        function nfAppendToBuffer(text) {
+            const trimmed = text.trim();
+            if (!trimmed) return;
+            if (trimmed === nfLastSegmentText) return;
+            if (nfSubtitleBuffer.endsWith(trimmed)) return;
+            let overlap = 0;
+            const maxOverlap = Math.min(
+                trimmed.length,
+                nfSubtitleBuffer.length,
+            );
+            for (let i = 1; i <= maxOverlap; i++) {
+                if (nfSubtitleBuffer.endsWith(trimmed.substring(0, i))) {
+                    overlap = i;
+                }
+            }
+            const newPart = trimmed.substring(overlap);
+            if (newPart) {
+                nfSubtitleBuffer +=
+                    (nfSubtitleBuffer && !nfSubtitleBuffer.endsWith(" ")
+                        ? " "
+                        : "") + newPart;
+            }
+            nfLastSegmentText = trimmed;
+            if (nfSubtitleBuffer.length > 3000) {
+                nfSubtitleBuffer = nfSubtitleBuffer.substring(
+                    nfSubtitleBuffer.length - 2000,
+                );
+            }
+        }
+
+        function nfExtractSentence(buffer, word) {
+            const idx = buffer.lastIndexOf(word);
+            if (idx === -1) return null;
+            const sentenceEnders = /[.!?…]/;
+            let start = 0;
+            for (let i = idx - 1; i >= 0; i--) {
+                if (sentenceEnders.test(buffer[i])) {
+                    start = i + 1;
+                    break;
+                }
+            }
+            let end = buffer.length;
+            for (let i = idx + word.length; i < buffer.length; i++) {
+                if (sentenceEnders.test(buffer[i])) {
+                    end = i + 1;
+                    break;
+                }
+            }
+            const sentence = buffer.substring(start, end).trim();
+            return sentence.length > word.length + 2 ? sentence : null;
+        }
+
+        async function nfCachedTranslate(text, targetLang) {
+            const key = `${text}|${targetLang}`;
+            if (nfTranslateCache.has(key)) return nfTranslateCache.get(key);
+            const result = await googleTranslate(text, targetLang);
+            nfTranslateCache.set(key, result);
+            if (nfTranslateCache.size > 200) {
+                const first = nfTranslateCache.keys().next().value;
+                nfTranslateCache.delete(first);
+            }
+            return result;
+        }
+
+        // Build tooltip HTML (reuse buildYTTooltipHtml logic)
+        function buildNFTooltipHtml(
+            srcLang,
+            targetLang,
+            original,
+            translated,
+            fullLine,
+            fullTranslated,
+        ) {
+            let fullLineHtml = "";
+            const cleanFullLine = fullLine ? stripBrackets(fullLine) : "";
+            const cleanFullTranslated = fullTranslated
+                ? stripBrackets(fullTranslated)
+                : "";
+            if (fullLine && fullTranslated) {
+                if (cleanFullLine) {
+                    fullLineHtml = `
+                    <div class="${PREFIX}row" style="margin-top:6px; padding-top:8px; border-top:1px solid rgba(255,255,255,0.1);">
+                        <span class="${PREFIX}label">ALL</span>
+                        <span class="${PREFIX}text ${PREFIX}original" style="font-size:12px;">${escapeHtml(cleanFullLine)}</span>
+                    </div>
+                    <div class="${PREFIX}row">
+                        <span class="${PREFIX}label"></span>
+                        <span class="${PREFIX}text ${PREFIX}translated" style="font-size:12px;">${escapeHtml(cleanFullTranslated)}</span>
+                    </div>`;
+                }
+            }
+            const saveSentenceBtn = cleanFullLine
+                ? `<button class="${PREFIX}save-sentence-btn" data-src="${escapeAttr(original)}" data-translated="${escapeAttr(translated)}" data-src-lang="${escapeAttr(srcLang)}" data-tgt-lang="${escapeAttr(targetLang)}" data-sentence="${escapeAttr(cleanFullLine)}" data-sentence-translated="${escapeAttr(cleanFullTranslated)}" title="Zapisz zdanie">${SVG_SAVE_SENTENCE}</button>`
+                : "";
+            return `
+                <div class="${PREFIX}header">
+                    <span>${langTag(srcLang)} → ${langTag(targetLang)}</span>
+                    <div style="display:flex;align-items:center;">
+                        <button class="${PREFIX}save-btn" data-src="${escapeAttr(original)}" data-translated="${escapeAttr(translated)}" data-src-lang="${escapeAttr(srcLang)}" data-tgt-lang="${escapeAttr(targetLang)}" title="Zapisz słowo">${SVG_SAVE}</button>
+                        ${saveSentenceBtn}
+                    </div>
+                </div>
+                <div class="${PREFIX}body">
+                    <div class="${PREFIX}row">
+                        <span class="${PREFIX}label">${langTag(srcLang)}</span>
+                        <span class="${PREFIX}text ${PREFIX}original">${escapeHtml(original)}</span>
+                        <button class="${PREFIX}speak" data-text="${escapeAttr(original)}" data-lang="${escapeAttr(srcLang)}" title="Odczytaj oryginał">${SVG_SPEAKER}</button>
+                    </div>
+                    <div class="${PREFIX}row">
+                        <span class="${PREFIX}label">${langTag(targetLang)}</span>
+                        <span class="${PREFIX}text ${PREFIX}translated">${escapeHtml(translated)}</span>
+                        <button class="${PREFIX}speak" data-text="${escapeAttr(translated)}" data-lang="${escapeAttr(targetLang)}" title="Odczytaj tłumaczenie">${SVG_SPEAKER}</button>
+                    </div>
+                    ${fullLineHtml}
+                </div>`;
+        }
+
+        // Attach TTS + save handlers (same pattern as YT)
+        function attachNFTooltipHandlers() {
+            if (!tooltipEl) return;
+            tooltipEl.querySelectorAll(`.${PREFIX}speak`).forEach((btn) => {
+                btn.addEventListener("click", (ev) => {
+                    ev.stopPropagation();
+                    const t = btn.getAttribute("data-text");
+                    const l = btn.getAttribute("data-lang");
+                    btn.classList.add("speaking");
+                    speak(t, l).then((utter) => {
+                        utter.onend = () => btn.classList.remove("speaking");
+                        utter.onerror = () => btn.classList.remove("speaking");
+                    });
+                });
+            });
+            const saveBtn = tooltipEl.querySelector(`.${PREFIX}save-btn`);
+            if (saveBtn) {
+                saveBtn.addEventListener("click", (ev) => {
+                    ev.stopPropagation();
+                    saveWord({
+                        original: saveBtn.getAttribute("data-src"),
+                        translated: saveBtn.getAttribute("data-translated"),
+                        srcLang: saveBtn.getAttribute("data-src-lang"),
+                        tgtLang: saveBtn.getAttribute("data-tgt-lang"),
+                        sentence: "",
+                        sentenceTranslated: "",
+                        url: window.location.href,
+                        timestamp: Date.now(),
+                        downloaded: false,
+                    });
+                    saveBtn.innerHTML = SVG_SAVE_CHECK;
+                    saveBtn.classList.add("saved");
+                });
+            }
+            const saveSentenceBtn = tooltipEl.querySelector(
+                `.${PREFIX}save-sentence-btn`,
+            );
+            if (saveSentenceBtn) {
+                saveSentenceBtn.addEventListener("click", (ev) => {
+                    ev.stopPropagation();
+                    saveWord({
+                        original: saveSentenceBtn.getAttribute("data-src"),
+                        translated:
+                            saveSentenceBtn.getAttribute("data-translated"),
+                        srcLang: saveSentenceBtn.getAttribute("data-src-lang"),
+                        tgtLang: saveSentenceBtn.getAttribute("data-tgt-lang"),
+                        sentence:
+                            saveSentenceBtn.getAttribute("data-sentence") || "",
+                        sentenceTranslated:
+                            saveSentenceBtn.getAttribute(
+                                "data-sentence-translated",
+                            ) || "",
+                        url: window.location.href,
+                        timestamp: Date.now(),
+                        downloaded: false,
+                    });
+                    saveSentenceBtn.innerHTML = SVG_SAVE_SENTENCE_CHECK;
+                    saveSentenceBtn.classList.add("saved");
+                });
+            }
+        }
+
+        // Split subtitle text node into individual word spans
+        function nfSplitIntoWords(el) {
+            const text = el.textContent;
+            if (!text.trim()) return;
+            el.textContent = "";
+            const parts = text.match(/\S+|\s+/g) || [];
+            for (const part of parts) {
+                if (/\S/.test(part)) {
+                    const wordSpan = document.createElement("span");
+                    wordSpan.className = `${PREFIX}nf-word`;
+                    wordSpan.textContent = part;
+                    el.appendChild(wordSpan);
+                } else {
+                    el.appendChild(document.createTextNode(part));
+                }
+            }
+        }
+
+        // Get all subtitle text spans in Netflix player
+        function getNFSubtitleSpans() {
+            // Netflix uses .player-timedtext-text-container for subtitles
+            // Inside that, the actual text lines are nested spans
+            return document.querySelectorAll(
+                ".player-timedtext-text-container span",
+            );
+        }
+
+        // Make a Netflix subtitle span interactive (split into words only)
+        function makeNFSubtitleClickable(el) {
+            // Skip if already processed or if it's one of our word spans
+            if (el.dataset[PREFIX + "nfBound"]) return;
+            if (el.classList.contains(`${PREFIX}nf-word`)) return;
+            // Only process leaf spans that contain direct text
+            if (!el.textContent.trim()) return;
+            // Only process leaf spans (no child spans except our own word spans)
+            const childSpan = el.querySelector(`span:not(.${PREFIX}nf-word)`);
+            if (childSpan) return;
+
+            el.dataset[PREFIX + "nfBound"] = "1";
+            el.classList.add(`${PREFIX}clickable`);
+
+            // Split text into word spans
+            nfSplitIntoWords(el);
+        }
+
+        // ── Helper: find .__qt_nf-word at given screen coordinates ──
+        // Uses elementsFromPoint to "see through" Netflix overlay divs
+        // (e.target is the overlay, NOT the subtitle – so closest() won't work)
+        function findNFWordAtPoint(x, y) {
+            const els = document.elementsFromPoint(x, y);
+            for (const el of els) {
+                if (el.classList && el.classList.contains(`${PREFIX}nf-word`))
+                    return el;
+            }
+            return null;
+        }
+
+        // ── Document-level event delegation via elementsFromPoint ──
+        // Netflix has invisible overlay divs sitting on top of subtitle text.
+        // e.target is ALWAYS the overlay, never the subtitle word span.
+        // elementsFromPoint() returns ALL elements at the coordinates,
+        // including ones underneath overlays, so we can find our word spans.
+
+        let nfLastHoveredWord = null;
+
+        // MOUSEMOVE – detect hover via elementsFromPoint (not mouseover)
+        document.addEventListener(
+            "mousemove",
+            (e) => {
+                // Only run on Netflix watch pages with subtitles
+                if (!document.querySelector(".player-timedtext")) return;
+
+                const wordSpan = findNFWordAtPoint(e.clientX, e.clientY);
+
+                if (wordSpan && wordSpan !== nfLastHoveredWord) {
+                    // Entered a new word
+                    if (nfLastHoveredWord) {
+                        nfLastHoveredWord.classList.remove(
+                            `${PREFIX}nf-word-hover`,
+                        );
+                    }
+                    nfLastHoveredWord = wordSpan;
+                    wordSpan.classList.add(`${PREFIX}nf-word-hover`);
+                    handleNFWordEnter(wordSpan);
+                } else if (!wordSpan && nfLastHoveredWord) {
+                    // Left the word area
+                    nfLastHoveredWord.classList.remove(
+                        `${PREFIX}nf-word-hover`,
+                    );
+                    nfLastHoveredWord = null;
+                    handleNFWordLeave();
+                }
+            },
+            true, // capturing phase
+        );
+
+        async function handleNFWordEnter(wordSpan) {
+            if (nfClickLocked) return;
+
+            nfIsHovering = true;
+            clearTimeout(nfHoverTimer);
+
+            // Pause video on hover
+            const video = document.querySelector("video");
+            if (video && !video.paused) {
+                nfWasPlayingBeforeHover = true;
+                video.pause();
+            }
+
+            const word = wordSpan.textContent.trim();
+            if (!word) return;
+
+            const rect = wordSpan.getBoundingClientRect();
+            currentText = word;
+            currentRect = rect;
+
+            nfHoverTimer = setTimeout(async () => {
+                if (!nfIsHovering) return;
+
+                showTooltip(
+                    `<div class="${PREFIX}loading"><div class="${PREFIX}spinner"></div> Tłumaczę…</div>`,
+                    rect,
+                );
+
+                try {
+                    const targetLang = await getTargetLang();
+                    const { translated, detectedLang } =
+                        await nfCachedTranslate(word, targetLang);
+                    const srcLang =
+                        typeof detectedLang === "string"
+                            ? detectedLang
+                            : "auto";
+
+                    if (!nfIsHovering) return;
+
+                    const html = buildNFTooltipHtml(
+                        srcLang,
+                        targetLang,
+                        word,
+                        translated,
+                        null,
+                        null,
+                    );
+                    showTooltip(html, rect);
+                    attachNFTooltipHandlers();
+
+                    // Auto-speak the hovered word
+                    speak(word, srcLang);
+                } catch (err) {
+                    console.error("[Quick Translator – NF CC hover]", err);
+                    showTooltip(
+                        `<div class="${PREFIX}error">⚠ ${escapeHtml(err.message)}</div>`,
+                        rect,
+                    );
+                }
+            }, 250);
+        }
+
+        function handleNFWordLeave() {
+            nfIsHovering = false;
+            clearTimeout(nfHoverTimer);
+            if (nfClickLocked) return;
+            setTimeout(() => {
+                if (
+                    !nfIsHovering &&
+                    !nfClickLocked &&
+                    !tooltipEl?.matches(":hover")
+                ) {
+                    hideTooltip();
+                    if (nfWasPlayingBeforeHover) {
+                        nfWasPlayingBeforeHover = false;
+                        const video = document.querySelector("video");
+                        if (video && video.paused) video.play();
+                    }
+                }
+            }, 400);
+        }
+
+        // CLICK – find word through overlays via elementsFromPoint
+        document.addEventListener(
+            "click",
+            async (e) => {
+                const wordSpan = findNFWordAtPoint(e.clientX, e.clientY);
+                if (!wordSpan) return;
+
+                e.stopPropagation();
+                e.stopImmediatePropagation();
+                e.preventDefault();
+                clearTimeout(nfHoverTimer);
+
+                nfClickLocked = true;
+
+                const clickedWord = wordSpan.textContent.trim();
+                if (!clickedWord) return;
+
+                // Pause video
+                const video = document.querySelector("video");
+                if (video && !video.paused) {
+                    nfClickWasPlaying = true;
+                    video.pause();
+                }
+
+                // Try to extract full sentence from buffer
+                let fullLine = nfExtractSentence(nfSubtitleBuffer, clickedWord);
+                // Fallback: gather from visible subtitle container
+                if (!fullLine) {
+                    const container = wordSpan.closest(
+                        ".player-timedtext-text-container",
+                    );
+                    if (container) {
+                        fullLine = container.textContent.trim();
+                    }
+                }
+
+                const rect = wordSpan.getBoundingClientRect();
+                currentText = clickedWord;
+                currentRect = rect;
+
+                try {
+                    const targetLang = await getTargetLang();
+                    const { translated: wordTranslated, detectedLang } =
+                        await nfCachedTranslate(clickedWord, targetLang);
+                    const srcLang =
+                        typeof detectedLang === "string"
+                            ? detectedLang
+                            : "auto";
+
+                    // Speak the clicked word
+                    speak(clickedWord, srcLang);
+
+                    showTooltip(
+                        `<div class="${PREFIX}loading"><div class="${PREFIX}spinner"></div> Tłumaczę całe zdanie…</div>`,
+                        rect,
+                    );
+
+                    let fullTranslated = null;
+                    const showFullLine = fullLine && fullLine !== clickedWord;
+                    if (showFullLine) {
+                        const result = await nfCachedTranslate(
+                            fullLine,
+                            targetLang,
+                        );
+                        fullTranslated = result.translated;
+                    }
+
+                    const html = buildNFTooltipHtml(
+                        srcLang,
+                        targetLang,
+                        clickedWord,
+                        wordTranslated,
+                        showFullLine ? fullLine : null,
+                        fullTranslated,
+                    );
+
+                    showTooltip(html, rect);
+                    attachNFTooltipHandlers();
+                } catch (err) {
+                    console.error("[Quick Translator – NF CC click]", err);
+                    showTooltip(
+                        `<div class="${PREFIX}error">⚠ ${escapeHtml(err.message)}</div>`,
+                        rect,
+                    );
+                }
+            },
+            true, // capturing phase
+        );
+
+        // Block Netflix play/pause toggle when clicking on subtitle words
+        for (const evtName of [
+            "mousedown",
+            "mouseup",
+            "pointerdown",
+            "pointerup",
+        ]) {
+            document.addEventListener(
+                evtName,
+                (e) => {
+                    if (findNFWordAtPoint(e.clientX, e.clientY)) {
+                        e.stopPropagation();
+                        e.stopImmediatePropagation();
+                        e.preventDefault();
+                    }
+                },
+                true, // capturing phase
+            );
+        }
+
+        // Process all currently visible Netflix subtitle elements
+        function processNFSubtitles() {
+            getNFSubtitleSpans().forEach((span) => {
+                // Only process leaf text spans (no child spans except our word spans)
+                const hasRealChildSpan = span.querySelector(
+                    `span:not(.${PREFIX}nf-word)`,
+                );
+                if (!hasRealChildSpan && span.textContent.trim()) {
+                    nfAppendToBuffer(span.textContent);
+                    makeNFSubtitleClickable(span);
+                }
+            });
+        }
+
+        // Observe DOM for Netflix subtitle elements
+        function observeNFSubtitles() {
+            const observer = new MutationObserver((mutations) => {
+                for (const mutation of mutations) {
+                    for (const node of mutation.addedNodes) {
+                        if (node.nodeType !== 1) continue;
+                        // Check if it's inside the subtitle container
+                        if (
+                            node.closest?.(
+                                ".player-timedtext-text-container",
+                            ) ||
+                            node.classList?.contains(
+                                "player-timedtext-text-container",
+                            )
+                        ) {
+                            const spans =
+                                node.tagName === "SPAN"
+                                    ? [node]
+                                    : node.querySelectorAll("span");
+                            spans.forEach((span) => {
+                                const hasRealChild = span.querySelector(
+                                    `span:not(.${PREFIX}nf-word)`,
+                                );
+                                if (!hasRealChild && span.textContent.trim()) {
+                                    nfAppendToBuffer(span.textContent);
+                                    makeNFSubtitleClickable(span);
+                                }
+                            });
+                        }
+                        // Also check for the container being added
+                        const containers =
+                            node.querySelectorAll?.(
+                                ".player-timedtext-text-container span",
+                            ) || [];
+                        containers.forEach((span) => {
+                            const hasRealChild = span.querySelector(
+                                `span:not(.${PREFIX}nf-word)`,
+                            );
+                            if (!hasRealChild && span.textContent.trim()) {
+                                nfAppendToBuffer(span.textContent);
+                                makeNFSubtitleClickable(span);
+                            }
+                        });
+                    }
+                }
+            });
+
+            observer.observe(document.body, {
+                childList: true,
+                subtree: true,
+            });
+
+            // Process any subtitles already on the page
+            processNFSubtitles();
+        }
+
+        // Start observing
+        if (document.readyState === "loading") {
+            document.addEventListener("DOMContentLoaded", () => {
+                observeNFSubtitles();
+                showNFHint(
+                    "Najedź na słowo w napisach = tłumaczenie · Kliknij = wymów + całe zdanie ✨",
+                );
+            });
+        } else {
+            observeNFSubtitles();
+            showNFHint(
+                "Najedź na słowo w napisach = tłumaczenie · Kliknij = wymów + całe zdanie ✨",
+            );
+        }
+
+        // Netflix is a SPA – re-check on URL changes
+        let nfLastUrl = location.href;
+        new MutationObserver(() => {
+            if (location.href !== nfLastUrl) {
+                nfLastUrl = location.href;
+                nfSubtitleBuffer = "";
+                nfLastSegmentText = "";
+                nfTranslateCache.clear();
+                setTimeout(processNFSubtitles, 2000);
             }
         }).observe(document.body, { childList: true, subtree: true });
     }
