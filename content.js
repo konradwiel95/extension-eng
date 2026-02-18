@@ -726,7 +726,9 @@
         window.speechSynthesis.cancel();
 
         // Build the utterance text from actual span contents to ensure charIndex matches
-        const utterText = wordSpans.map((s) => s.textContent).join(" ");
+        const utterText = cleanTextForTTS(
+            wordSpans.map((s) => s.textContent).join(" "),
+        );
 
         // Build char offset map: for each word span, its start offset in utterText
         const wordCharStarts = [];
@@ -896,10 +898,18 @@
         return { translated, detectedLang };
     }
 
+    // ── Clean text for TTS (remove symbols read aloud) ─────────────
+    function cleanTextForTTS(text) {
+        return text
+            .replace(/#/g, "")
+            .replace(/\s{2,}/g, " ")
+            .trim();
+    }
+
     // ── TTS (Web Speech API) ───────────────────────────────────────
     function speak(text, lang) {
         window.speechSynthesis.cancel();
-        const utter = new SpeechSynthesisUtterance(text);
+        const utter = new SpeechSynthesisUtterance(cleanTextForTTS(text));
         utter.lang = lang;
 
         // Apply stored voice/pitch/rate settings
@@ -2452,7 +2462,9 @@
             xWordSpans = xWrapWordsInTweet(article);
 
             // Build utterance from word spans to ensure charIndex alignment
-            const utterText = xWordSpans.map((s) => s.textContent).join(" ");
+            const utterText = cleanTextForTTS(
+                xWordSpans.map((s) => s.textContent).join(" "),
+            );
             const wordCharStarts = [];
             let off = 0;
             for (let i = 0; i < xWordSpans.length; i++) {
