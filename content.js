@@ -320,6 +320,36 @@
     .${PREFIX}nf-sub-hint.visible {
       opacity: 1;
     }
+
+    /* ── X.com (Twitter) TTS button ── */
+    .${PREFIX}x-speak-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 34px;
+      height: 34px;
+      border: none;
+      background: transparent;
+      color: #4ecdc4;
+      border-radius: 50%;
+      cursor: pointer;
+      transition: background .2s, color .2s;
+      padding: 0;
+      margin: 0;
+      vertical-align: middle;
+    }
+    .${PREFIX}x-speak-btn:hover {
+      background: rgba(78, 205, 196, 0.1);
+      color: #4ecdc4;
+    }
+    .${PREFIX}x-speak-btn.${PREFIX}x-speaking {
+      color: #4ecdc4;
+      animation: ${PREFIX}x-pulse 1s ease-in-out infinite;
+    }
+    @keyframes ${PREFIX}x-pulse {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.15); }
+    }
   `;
     document.head.appendChild(style);
 
@@ -2270,6 +2300,181 @@
                 nfLastSegmentText = "";
                 nfTranslateCache.clear();
                 setTimeout(processNFSubtitles, 2000);
+            }
+        }).observe(document.body, { childList: true, subtree: true });
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // ── X.com (Twitter) – TTS button on every post/reply ──────────
+    // ══════════════════════════════════════════════════════════════
+
+    const isX = /^(x\.com|twitter\.com)$/.test(window.location.hostname);
+
+    if (isX) {
+        const X_SPEAK_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>`;
+
+        let xCurrentSpeakingBtn = null;
+
+        // Get the full text content of a tweet article
+        function getPostText(article) {
+            // The tweet text is inside [data-testid="tweetText"]
+            const textEl = article.querySelector('[data-testid="tweetText"]');
+            if (!textEl) return "";
+            return textEl.innerText.trim();
+        }
+
+        // Find the action bar (like, retweet, reply row) inside a tweet
+        function getActionBar(article) {
+            // X.com uses role="group" for the action buttons row
+            return article.querySelector('[role="group"]');
+        }
+
+        function stopXSpeaking() {
+            window.speechSynthesis.cancel();
+            if (xCurrentSpeakingBtn) {
+                xCurrentSpeakingBtn.classList.remove(`${PREFIX}x-speaking`);
+                xCurrentSpeakingBtn = null;
+            }
+        }
+
+        function onXSpeakClick(e) {
+            e.stopPropagation();
+            e.preventDefault();
+
+            const btn = e.currentTarget;
+            const article = btn.closest("article");
+            if (!article) return;
+
+            // If this button is already speaking, stop it
+            if (btn.classList.contains(`${PREFIX}x-speaking`)) {
+                stopXSpeaking();
+                return;
+            }
+
+            // Stop any other speaking button first
+            stopXSpeaking();
+
+            const text = getPostText(article);
+            if (!text) return;
+
+            btn.classList.add(`${PREFIX}x-speaking`);
+            xCurrentSpeakingBtn = btn;
+
+            // Detect language from html lang or default to "en"
+            const lang = document.documentElement.lang || "en";
+
+            window.speechSynthesis.cancel();
+            const utter = new SpeechSynthesisUtterance(text);
+            utter.lang = lang;
+
+            utter.onend = () => {
+                btn.classList.remove(`${PREFIX}x-speaking`);
+                if (xCurrentSpeakingBtn === btn) xCurrentSpeakingBtn = null;
+            };
+            utter.onerror = () => {
+                btn.classList.remove(`${PREFIX}x-speaking`);
+                if (xCurrentSpeakingBtn === btn) xCurrentSpeakingBtn = null;
+            };
+
+            // Apply user voice/rate settings
+            if (chrome?.storage?.sync) {
+                chrome.storage.sync.get(
+                    { speechVoice: "", speechRate: 0.95 },
+                    (data) => {
+                        utter.rate = data.speechRate;
+                        if (data.speechVoice) {
+                            const voices = window.speechSynthesis.getVoices();
+                            const match = voices.find(
+                                (v) => v.name === data.speechVoice,
+                            );
+                            if (match) utter.voice = match;
+                        }
+                        window.speechSynthesis.speak(utter);
+                    },
+                );
+            } else {
+                utter.rate = 0.95;
+                window.speechSynthesis.speak(utter);
+            }
+        }
+
+        // Inject speak button into tweet header (top-right, before Grok button)
+        function injectXSpeakButton(article) {
+            if (article.dataset[PREFIX + "xBound"]) return;
+            article.dataset[PREFIX + "xBound"] = "1";
+
+            // Only add if post has text
+            const text = getPostText(article);
+            if (!text) return;
+
+            // Find the top-right header area with Grok/More buttons
+            const grokBtn = article.querySelector(
+                '[aria-label="Grok actions"]',
+            );
+            const caretBtn = article.querySelector('[data-testid="caret"]');
+            // The container row that holds Grok + More buttons
+            const headerActionsRow =
+                grokBtn?.closest(
+                    '[class*="r-1awozwy"][class*="r-18u37iz"][class*="r-1cmwbt1"]',
+                ) ||
+                caretBtn?.closest(
+                    '[class*="r-1awozwy"][class*="r-18u37iz"][class*="r-1cmwbt1"]',
+                );
+
+            if (!headerActionsRow) return;
+
+            const btn = document.createElement("button");
+            btn.className = `${PREFIX}x-speak-btn`;
+            btn.title = "Czytaj na głos";
+            btn.innerHTML = X_SPEAK_SVG;
+            btn.addEventListener("click", onXSpeakClick);
+
+            // Wrap in a div matching X.com header button styling
+            const wrapper = document.createElement("div");
+            wrapper.style.display = "flex";
+            wrapper.style.alignItems = "center";
+            wrapper.style.marginRight = "4px";
+            wrapper.appendChild(btn);
+
+            // Insert before the first child (before Grok button area)
+            headerActionsRow.insertBefore(wrapper, headerActionsRow.firstChild);
+        }
+
+        // Process all visible tweets
+        function processXPosts() {
+            document.querySelectorAll("article").forEach((article) => {
+                injectXSpeakButton(article);
+            });
+        }
+
+        // Observe for new tweets (infinite scroll, navigation)
+        function observeXPosts() {
+            const observer = new MutationObserver(() => {
+                processXPosts();
+            });
+
+            observer.observe(document.body, {
+                childList: true,
+                subtree: true,
+            });
+
+            // Process already visible tweets
+            processXPosts();
+        }
+
+        // Start observing
+        if (document.readyState === "loading") {
+            document.addEventListener("DOMContentLoaded", observeXPosts);
+        } else {
+            observeXPosts();
+        }
+
+        // X.com is a SPA – re-process on URL changes
+        let xLastUrl = location.href;
+        new MutationObserver(() => {
+            if (location.href !== xLastUrl) {
+                xLastUrl = location.href;
+                setTimeout(processXPosts, 1000);
             }
         }).observe(document.body, { childList: true, subtree: true });
     }
