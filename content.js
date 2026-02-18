@@ -445,6 +445,99 @@
       to { opacity: 1; transform: translateY(0); }
     }
 
+    /* ── Netflix-style subtitles for lookmovie2 ── */
+    .vjs-text-track-display {
+      pointer-events: none !important;
+    }
+    .vjs-text-track-display > div {
+      margin: 0 !important;
+      position: absolute !important;
+      inset: 0 !important;
+      display: flex !important;
+      flex-direction: column !important;
+      justify-content: flex-end !important;
+      align-items: center !important;
+      padding-bottom: 4% !important;
+      pointer-events: none !important;
+    }
+    .vjs-text-track-cue {
+      position: relative !important;
+      inset: auto !important;
+      width: auto !important;
+      max-width: 80% !important;
+      height: auto !important;
+      background-color: transparent !important;
+      text-align: center !important;
+      font: 700 2.2vw "Netflix Sans", "Helvetica Neue", Helvetica, Arial, sans-serif !important;
+      line-height: 1.3 !important;
+      white-space: pre-line !important;
+      padding: 0 !important;
+      margin: 0 !important;
+      pointer-events: auto !important;
+      cursor: text !important;
+      -webkit-user-select: text !important;
+      user-select: text !important;
+    }
+    .vjs-text-track-cue > div,
+    .vjs-text-track-cue div {
+      background-color: transparent !important;
+      color: #ffffff !important;
+      font-family: "Netflix Sans", "Helvetica Neue", Helvetica, Arial, sans-serif !important;
+      font-weight: 700 !important;
+      font-size: 2.2vw !important;
+      line-height: 1.3 !important;
+      text-shadow:
+        0 0 5px rgba(0,0,0,0.9),
+        0 0 10px rgba(0,0,0,0.7),
+        2px 2px 4px rgba(0,0,0,0.9),
+        -2px -2px 4px rgba(0,0,0,0.9),
+        2px -2px 4px rgba(0,0,0,0.9),
+        -2px 2px 4px rgba(0,0,0,0.9),
+        0 2px 4px rgba(0,0,0,0.9) !important;
+      display: inline !important;
+      position: relative !important;
+      inset: auto !important;
+      padding: 2px 8px !important;
+      pointer-events: auto !important;
+      cursor: text !important;
+      -webkit-user-select: text !important;
+      user-select: text !important;
+    }
+
+    /* ── LookMovie2 word-level click-to-translate ── */
+    .${PREFIX}lm-word {
+      cursor: pointer !important;
+      border-radius: 3px;
+      transition: background .15s ease, box-shadow .15s ease;
+      display: inline !important;
+      padding: 1px 2px;
+      white-space: normal !important;
+    }
+    .${PREFIX}lm-word:hover,
+    .${PREFIX}lm-word.${PREFIX}lm-word-hover {
+      background: rgba(74, 108, 247, 0.45) !important;
+      box-shadow: 0 0 0 3px rgba(74, 108, 247, 0.3);
+    }
+    .${PREFIX}lm-sub-hint {
+      position: fixed;
+      z-index: 2147483647;
+      bottom: 90px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(74, 108, 247, 0.9);
+      color: #fff;
+      font-size: 12px;
+      padding: 6px 14px;
+      border-radius: 20px;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity .4s ease;
+      white-space: nowrap;
+    }
+    .${PREFIX}lm-sub-hint.visible {
+      opacity: 1;
+    }
+
   `;
     document.head.appendChild(style);
 
@@ -2260,6 +2353,556 @@
                 setTimeout(processNFSubtitles, 2000);
             }
         }).observe(document.body, { childList: true, subtree: true });
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // ── LookMovie2 CC Subtitle Click-to-Translate ─────────────────
+    // ══════════════════════════════════════════════════════════════
+
+    const isLookMovie = window.location.hostname.includes("lookmovie");
+
+    if (isLookMovie) {
+        let lmHintEl = null;
+        let lmHintTimer = null;
+
+        function showLMHint(msg) {
+            if (!lmHintEl) {
+                lmHintEl = document.createElement("div");
+                lmHintEl.className = `${PREFIX}lm-sub-hint`;
+                document.body.appendChild(lmHintEl);
+            }
+            lmHintEl.textContent = msg;
+            lmHintEl.classList.add("visible");
+            clearTimeout(lmHintTimer);
+            lmHintTimer = setTimeout(() => {
+                lmHintEl.classList.remove("visible");
+            }, 4000);
+        }
+
+        let lmTranslateCache = new Map();
+        let lmHoverTimer = null;
+        let lmIsHovering = false;
+        let lmWasPlayingBeforeHover = false;
+        let lmClickLocked = false;
+        let lmClickWasPlaying = false;
+
+        function dismissLMClick() {
+            if (!lmClickLocked) return;
+            lmClickLocked = false;
+            hideTooltip();
+            if (lmClickWasPlaying) {
+                lmClickWasPlaying = false;
+                const video = document.querySelector("video");
+                if (video && video.paused) video.play();
+            }
+        }
+
+        const origDismissForLM = ytDismissClickFn;
+        ytDismissClickFn = () => {
+            if (origDismissForLM) origDismissForLM();
+            dismissLMClick();
+        };
+
+        // Subtitle history buffer
+        let lmSubtitleBuffer = "";
+        let lmLastSegmentText = "";
+
+        function lmAppendToBuffer(text) {
+            const trimmed = text.trim();
+            if (!trimmed) return;
+            if (trimmed === lmLastSegmentText) return;
+            if (lmSubtitleBuffer.endsWith(trimmed)) return;
+            let overlap = 0;
+            const maxOverlap = Math.min(
+                trimmed.length,
+                lmSubtitleBuffer.length,
+            );
+            for (let i = 1; i <= maxOverlap; i++) {
+                if (lmSubtitleBuffer.endsWith(trimmed.substring(0, i))) {
+                    overlap = i;
+                }
+            }
+            const newPart = trimmed.substring(overlap);
+            if (newPart) {
+                lmSubtitleBuffer +=
+                    (lmSubtitleBuffer && !lmSubtitleBuffer.endsWith(" ")
+                        ? " "
+                        : "") + newPart;
+            }
+            lmLastSegmentText = trimmed;
+            if (lmSubtitleBuffer.length > 3000) {
+                lmSubtitleBuffer = lmSubtitleBuffer.substring(
+                    lmSubtitleBuffer.length - 2000,
+                );
+            }
+        }
+
+        function lmExtractSentence(buffer, word) {
+            const idx = buffer.lastIndexOf(word);
+            if (idx === -1) return null;
+            const sentenceEnders = /[.!?…]/;
+            let start = 0;
+            for (let i = idx - 1; i >= 0; i--) {
+                if (sentenceEnders.test(buffer[i])) {
+                    start = i + 1;
+                    break;
+                }
+            }
+            let end = buffer.length;
+            for (let i = idx + word.length; i < buffer.length; i++) {
+                if (sentenceEnders.test(buffer[i])) {
+                    end = i + 1;
+                    break;
+                }
+            }
+            const sentence = buffer.substring(start, end).trim();
+            return sentence.length > word.length + 2 ? sentence : null;
+        }
+
+        async function lmCachedTranslate(text, targetLang) {
+            const key = `${text}|${targetLang}`;
+            if (lmTranslateCache.has(key)) return lmTranslateCache.get(key);
+            const result = await googleTranslate(text, targetLang);
+            lmTranslateCache.set(key, result);
+            if (lmTranslateCache.size > 200) {
+                const first = lmTranslateCache.keys().next().value;
+                lmTranslateCache.delete(first);
+            }
+            return result;
+        }
+
+        function buildLMTooltipHtml(
+            srcLang,
+            targetLang,
+            original,
+            translated,
+            fullLine,
+            fullTranslated,
+        ) {
+            let fullLineHtml = "";
+            const cleanFullLine = fullLine ? stripBrackets(fullLine) : "";
+            const cleanFullTranslated = fullTranslated
+                ? stripBrackets(fullTranslated)
+                : "";
+            if (fullLine && fullTranslated) {
+                if (cleanFullLine) {
+                    fullLineHtml = `
+                    <div class="${PREFIX}row" style="margin-top:6px; padding-top:8px; border-top:1px solid rgba(255,255,255,0.1);">
+                        <span class="${PREFIX}label">ALL</span>
+                        <span class="${PREFIX}text ${PREFIX}original" style="font-size:12px;">${escapeHtml(cleanFullLine)}</span>
+                    </div>
+                    <div class="${PREFIX}row">
+                        <span class="${PREFIX}label"></span>
+                        <span class="${PREFIX}text ${PREFIX}translated" style="font-size:12px;">${escapeHtml(cleanFullTranslated)}</span>
+                    </div>`;
+                }
+            }
+            const saveSentenceBtn = cleanFullLine
+                ? `<button class="${PREFIX}save-sentence-btn" data-src="${escapeAttr(original)}" data-translated="${escapeAttr(translated)}" data-src-lang="${escapeAttr(srcLang)}" data-tgt-lang="${escapeAttr(targetLang)}" data-sentence="${escapeAttr(cleanFullLine)}" data-sentence-translated="${escapeAttr(cleanFullTranslated)}" title="Zapisz zdanie">${SVG_SAVE_SENTENCE}</button>`
+                : "";
+            return `
+                <div class="${PREFIX}header">
+                    <span>${langTag(srcLang)} → ${langTag(targetLang)}</span>
+                    <div style="display:flex;align-items:center;">
+                        <button class="${PREFIX}save-btn" data-src="${escapeAttr(original)}" data-translated="${escapeAttr(translated)}" data-src-lang="${escapeAttr(srcLang)}" data-tgt-lang="${escapeAttr(targetLang)}" title="Zapisz słowo">${SVG_SAVE}</button>
+                        ${saveSentenceBtn}
+                    </div>
+                </div>
+                <div class="${PREFIX}body">
+                    <div class="${PREFIX}row">
+                        <span class="${PREFIX}label">${langTag(srcLang)}</span>
+                        <span class="${PREFIX}text ${PREFIX}original">${escapeHtml(original)}</span>
+                        <button class="${PREFIX}speak" data-text="${escapeAttr(original)}" data-lang="${escapeAttr(srcLang)}" title="Odczytaj oryginał">${SVG_SPEAKER}</button>
+                    </div>
+                    <div class="${PREFIX}row">
+                        <span class="${PREFIX}label">${langTag(targetLang)}</span>
+                        <span class="${PREFIX}text ${PREFIX}translated">${escapeHtml(translated)}</span>
+                        <button class="${PREFIX}speak" data-text="${escapeAttr(translated)}" data-lang="${escapeAttr(targetLang)}" title="Odczytaj tłumaczenie">${SVG_SPEAKER}</button>
+                    </div>
+                    ${fullLineHtml}
+                </div>`;
+        }
+
+        function attachLMTooltipHandlers() {
+            if (!tooltipEl) return;
+            tooltipEl.querySelectorAll(`.${PREFIX}speak`).forEach((btn) => {
+                btn.addEventListener("click", (ev) => {
+                    ev.stopPropagation();
+                    const t = btn.getAttribute("data-text");
+                    const l = btn.getAttribute("data-lang");
+                    btn.classList.add("speaking");
+                    speak(t, l).then((utter) => {
+                        utter.onend = () => btn.classList.remove("speaking");
+                        utter.onerror = () => btn.classList.remove("speaking");
+                    });
+                });
+            });
+            const saveBtn = tooltipEl.querySelector(`.${PREFIX}save-btn`);
+            if (saveBtn) {
+                saveBtn.addEventListener("click", (ev) => {
+                    ev.stopPropagation();
+                    saveWord({
+                        original: saveBtn.getAttribute("data-src"),
+                        translated: saveBtn.getAttribute("data-translated"),
+                        srcLang: saveBtn.getAttribute("data-src-lang"),
+                        tgtLang: saveBtn.getAttribute("data-tgt-lang"),
+                        sentence: "",
+                        sentenceTranslated: "",
+                        url: window.location.href,
+                        timestamp: Date.now(),
+                        downloaded: false,
+                    });
+                    saveBtn.innerHTML = SVG_SAVE_CHECK;
+                    saveBtn.classList.add("saved");
+                });
+            }
+            const saveSentenceBtn = tooltipEl.querySelector(
+                `.${PREFIX}save-sentence-btn`,
+            );
+            if (saveSentenceBtn) {
+                saveSentenceBtn.addEventListener("click", (ev) => {
+                    ev.stopPropagation();
+                    saveWord({
+                        original: saveSentenceBtn.getAttribute("data-src"),
+                        translated:
+                            saveSentenceBtn.getAttribute("data-translated"),
+                        srcLang: saveSentenceBtn.getAttribute("data-src-lang"),
+                        tgtLang: saveSentenceBtn.getAttribute("data-tgt-lang"),
+                        sentence:
+                            saveSentenceBtn.getAttribute("data-sentence") || "",
+                        sentenceTranslated:
+                            saveSentenceBtn.getAttribute(
+                                "data-sentence-translated",
+                            ) || "",
+                        url: window.location.href,
+                        timestamp: Date.now(),
+                        downloaded: false,
+                    });
+                    saveSentenceBtn.innerHTML = SVG_SAVE_SENTENCE_CHECK;
+                    saveSentenceBtn.classList.add("saved");
+                });
+            }
+        }
+
+        // Split subtitle text into individual clickable word spans
+        function lmSplitIntoWords(el) {
+            const text = el.textContent;
+            if (!text.trim()) return;
+            el.textContent = "";
+            const parts = text.match(/\S+|\s+/g) || [];
+            for (const part of parts) {
+                if (/\S/.test(part)) {
+                    const wordSpan = document.createElement("span");
+                    wordSpan.className = `${PREFIX}lm-word`;
+                    wordSpan.textContent = part;
+                    el.appendChild(wordSpan);
+                } else {
+                    el.appendChild(document.createTextNode(part));
+                }
+            }
+        }
+
+        // Find word span at given coordinates (works through overlays)
+        function findLMWordAtPoint(x, y) {
+            const els = document.elementsFromPoint(x, y);
+            for (const el of els) {
+                if (el.classList && el.classList.contains(`${PREFIX}lm-word`))
+                    return el;
+            }
+            return null;
+        }
+
+        // Make a subtitle cue div interactive
+        function makeLMSubtitleClickable(el) {
+            if (el.dataset[PREFIX + "lmBound"]) return;
+            if (el.classList.contains(`${PREFIX}lm-word`)) return;
+            if (!el.textContent.trim()) return;
+            // Only process leaf divs that contain direct text (innermost div)
+            const childDiv = el.querySelector(`div:not(.${PREFIX}lm-word)`);
+            if (childDiv) return;
+            el.dataset[PREFIX + "lmBound"] = "1";
+            lmSplitIntoWords(el);
+        }
+
+        let lmLastHoveredWord = null;
+
+        // MOUSEMOVE – hover detection
+        document.addEventListener(
+            "mousemove",
+            (e) => {
+                if (!document.querySelector(".vjs-text-track-display")) return;
+
+                const wordSpan = findLMWordAtPoint(e.clientX, e.clientY);
+
+                if (wordSpan && wordSpan !== lmLastHoveredWord) {
+                    if (lmLastHoveredWord)
+                        lmLastHoveredWord.classList.remove(
+                            `${PREFIX}lm-word-hover`,
+                        );
+                    lmLastHoveredWord = wordSpan;
+                    wordSpan.classList.add(`${PREFIX}lm-word-hover`);
+                    handleLMWordEnter(wordSpan);
+                } else if (!wordSpan && lmLastHoveredWord) {
+                    lmLastHoveredWord.classList.remove(
+                        `${PREFIX}lm-word-hover`,
+                    );
+                    lmLastHoveredWord = null;
+                    handleLMWordLeave();
+                }
+            },
+            true,
+        );
+
+        async function handleLMWordEnter(wordSpan) {
+            if (lmClickLocked) return;
+            lmIsHovering = true;
+            clearTimeout(lmHoverTimer);
+
+            const video = document.querySelector("video");
+            if (video && !video.paused) {
+                lmWasPlayingBeforeHover = true;
+                video.pause();
+            }
+
+            const word = wordSpan.textContent.trim();
+            if (!word) return;
+
+            const rect = wordSpan.getBoundingClientRect();
+            currentText = word;
+            currentRect = rect;
+
+            lmHoverTimer = setTimeout(async () => {
+                if (!lmIsHovering) return;
+                showTooltip(
+                    `<div class="${PREFIX}loading"><div class="${PREFIX}spinner"></div></div>`,
+                    rect,
+                );
+                try {
+                    const targetLang = await getTargetLang();
+                    const { translated, detectedLang } =
+                        await lmCachedTranslate(word, targetLang);
+                    const srcLang =
+                        typeof detectedLang === "string"
+                            ? detectedLang
+                            : "auto";
+                    if (!lmIsHovering) return;
+                    const html = buildLMTooltipHtml(
+                        srcLang,
+                        targetLang,
+                        word,
+                        translated,
+                        null,
+                        null,
+                    );
+                    showTooltip(html, rect);
+                    attachLMTooltipHandlers();
+                    speak(word, srcLang);
+                } catch (err) {
+                    console.error("[Quick Translator – LM CC hover]", err);
+                    showTooltip(
+                        `<div class="${PREFIX}error">⚠ ${escapeHtml(err.message)}</div>`,
+                        rect,
+                    );
+                }
+            }, 250);
+        }
+
+        function handleLMWordLeave() {
+            lmIsHovering = false;
+            clearTimeout(lmHoverTimer);
+            if (lmClickLocked) return;
+            setTimeout(() => {
+                if (
+                    !lmIsHovering &&
+                    !lmClickLocked &&
+                    !tooltipEl?.matches(":hover")
+                ) {
+                    hideTooltip();
+                    if (lmWasPlayingBeforeHover) {
+                        lmWasPlayingBeforeHover = false;
+                        const video = document.querySelector("video");
+                        if (video && video.paused) video.play();
+                    }
+                }
+            }, 400);
+        }
+
+        // CLICK – translate word + full sentence
+        document.addEventListener(
+            "click",
+            async (e) => {
+                const wordSpan = findLMWordAtPoint(e.clientX, e.clientY);
+                if (!wordSpan) return;
+
+                e.stopPropagation();
+                e.stopImmediatePropagation();
+                e.preventDefault();
+                clearTimeout(lmHoverTimer);
+
+                lmClickLocked = true;
+
+                const clickedWord = wordSpan.textContent.trim();
+                if (!clickedWord) return;
+
+                const video = document.querySelector("video");
+                if (video && !video.paused) {
+                    lmClickWasPlaying = true;
+                    video.pause();
+                }
+
+                // Try to extract full sentence from buffer
+                let fullLine = lmExtractSentence(lmSubtitleBuffer, clickedWord);
+                // Fallback: gather from visible cue
+                if (!fullLine) {
+                    const cue = wordSpan.closest(".vjs-text-track-cue");
+                    if (cue) fullLine = cue.textContent.trim();
+                }
+
+                const rect = wordSpan.getBoundingClientRect();
+                currentText = clickedWord;
+                currentRect = rect;
+
+                try {
+                    const targetLang = await getTargetLang();
+                    const { translated: wordTranslated, detectedLang } =
+                        await lmCachedTranslate(clickedWord, targetLang);
+                    const srcLang =
+                        typeof detectedLang === "string"
+                            ? detectedLang
+                            : "auto";
+
+                    speak(clickedWord, srcLang);
+
+                    showTooltip(
+                        `<div class="${PREFIX}loading"><div class="${PREFIX}spinner"></div></div>`,
+                        rect,
+                    );
+
+                    let fullTranslated = null;
+                    const showFullLine = fullLine && fullLine !== clickedWord;
+                    if (showFullLine) {
+                        const result = await lmCachedTranslate(
+                            fullLine,
+                            targetLang,
+                        );
+                        fullTranslated = result.translated;
+                    }
+
+                    const html = buildLMTooltipHtml(
+                        srcLang,
+                        targetLang,
+                        clickedWord,
+                        wordTranslated,
+                        showFullLine ? fullLine : null,
+                        fullTranslated,
+                    );
+                    showTooltip(html, rect);
+                    attachLMTooltipHandlers();
+                } catch (err) {
+                    console.error("[Quick Translator – LM CC click]", err);
+                    showTooltip(
+                        `<div class="${PREFIX}error">⚠ ${escapeHtml(err.message)}</div>`,
+                        rect,
+                    );
+                }
+            },
+            true,
+        );
+
+        // Block video play/pause toggle when clicking on subtitle words
+        for (const evtName of [
+            "mousedown",
+            "mouseup",
+            "pointerdown",
+            "pointerup",
+        ]) {
+            document.addEventListener(
+                evtName,
+                (e) => {
+                    if (findLMWordAtPoint(e.clientX, e.clientY)) {
+                        e.stopPropagation();
+                        e.stopImmediatePropagation();
+                        e.preventDefault();
+                    }
+                },
+                true,
+            );
+        }
+
+        // Process visible subtitle cue elements
+        function processLMSubtitles() {
+            document
+                .querySelectorAll(".vjs-text-track-cue div")
+                .forEach((div) => {
+                    if (div.textContent.trim() && !div.querySelector(`div`)) {
+                        lmAppendToBuffer(div.textContent);
+                        makeLMSubtitleClickable(div);
+                    }
+                });
+        }
+
+        // Observe DOM for new subtitle cues
+        function observeLMSubtitles() {
+            const observer = new MutationObserver((mutations) => {
+                for (const mutation of mutations) {
+                    for (const node of mutation.addedNodes) {
+                        if (node.nodeType !== 1) continue;
+                        if (
+                            node.closest?.(".vjs-text-track-cue") ||
+                            node.classList?.contains("vjs-text-track-cue")
+                        ) {
+                            const divs =
+                                node.tagName === "DIV"
+                                    ? [node]
+                                    : node.querySelectorAll("div");
+                            divs.forEach((div) => {
+                                if (
+                                    div.textContent.trim() &&
+                                    !div.querySelector("div")
+                                ) {
+                                    lmAppendToBuffer(div.textContent);
+                                    makeLMSubtitleClickable(div);
+                                }
+                            });
+                        }
+                    }
+                    // Also handle characterData changes (subtitle text updates)
+                    if (mutation.type === "characterData") {
+                        const cueDiv = mutation.target.parentElement?.closest?.(
+                            ".vjs-text-track-cue div",
+                        );
+                        if (cueDiv && !cueDiv.querySelector("div")) {
+                            cueDiv.dataset[PREFIX + "lmBound"] = "";
+                            lmAppendToBuffer(cueDiv.textContent);
+                            makeLMSubtitleClickable(cueDiv);
+                        }
+                    }
+                }
+            });
+
+            observer.observe(document.body, {
+                childList: true,
+                subtree: true,
+                characterData: true,
+            });
+            processLMSubtitles();
+            // Re-process periodically (subtitle cues can be replaced without mutation events)
+            setInterval(processLMSubtitles, 500);
+        }
+
+        if (document.readyState === "loading") {
+            document.addEventListener("DOMContentLoaded", () => {
+                observeLMSubtitles();
+                showLMHint(
+                    "Najedź na słowo w napisach = tłumaczenie · Kliknij = wymów + całe zdanie ✨",
+                );
+            });
+        } else {
+            observeLMSubtitles();
+            showLMHint(
+                "Najedź na słowo w napisach = tłumaczenie · Kliknij = wymów + całe zdanie ✨",
+            );
+        }
     }
 
     // ══════════════════════════════════════════════════════════════
