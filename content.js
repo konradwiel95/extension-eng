@@ -11,6 +11,18 @@
     const ICON_ID = PREFIX + "icon";
     const TOOLTIP_ID = PREFIX + "tooltip";
 
+    // Pre-load voices so they're available when TTS is first used
+    window.speechSynthesis?.getVoices();
+    if (window.speechSynthesis?.onvoiceschanged !== undefined) {
+        window.speechSynthesis.onvoiceschanged = () => {
+            const v = window.speechSynthesis.getVoices();
+            console.log(
+                "[QuickTranslator] Available voices:",
+                v.map((x) => `${x.name} (${x.lang})`),
+            );
+        };
+    }
+
     // ── SVG icons (inline) ─────────────────────────────────────────
     const SVG_TRANSLATE = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8l6 6"/><path d="M4 14l6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="M22 22l-5-10-5 10"/><path d="M14 18h6"/></svg>`;
 
@@ -81,20 +93,14 @@
       50% { box-shadow: 0 0 0 6px rgba(78,205,196,0); }
     }
 
-    /* ── Word highlight for read-aloud ── */
-    .${PREFIX}word-hl {
-      transition: background .15s ease, box-shadow .15s ease;
+    /* ── Reading highlight (entire selection) ── */
+    .${PREFIX}reading-hl {
+      background: rgba(78, 205, 196, 0.2) !important;
       border-radius: 4px;
-      padding: 2px 1px;
-      display: inline;
-    }
-    .${PREFIX}word-active {
-      background: rgba(78, 205, 196, 0.45) !important;
-      box-shadow: 0 0 18px rgba(78, 205, 196, 0.4), 0 0 4px rgba(78,205,196,0.6) inset;
-      color: #fff !important;
-      border-radius: 4px;
-      outline: 2px solid rgba(78, 205, 196, 0.4);
-      outline-offset: 1px;
+      box-shadow: 0 0 12px rgba(78, 205, 196, 0.15);
+      outline: 1px solid rgba(78, 205, 196, 0.25);
+      outline-offset: 2px;
+      transition: background .3s ease, box-shadow .3s ease;
     }
 
     /* ── Tooltip panel ── */
@@ -350,19 +356,40 @@
       0%, 100% { transform: scale(1); }
       50% { transform: scale(1.15); }
     }
-    /* X.com word highlight during TTS */
-    .${PREFIX}x-word-hl {
+
+    /* ── X.com (Twitter) word-level translate ── */
+    .${PREFIX}x-word {
+      cursor: pointer !important;
+      border-radius: 3px;
       transition: background .15s ease, box-shadow .15s ease;
-      border-radius: 4px;
-      padding: 1px 2px;
       display: inline;
+      padding: 1px 2px;
     }
-    .${PREFIX}x-word-active {
-      background: rgba(78, 205, 196, 0.45) !important;
-      box-shadow: 0 0 18px rgba(78, 205, 196, 0.4), 0 0 4px rgba(78,205,196,0.6) inset;
-      color: #fff !important;
-      border-radius: 4px;
+    .${PREFIX}x-word:hover,
+    .${PREFIX}x-word.${PREFIX}x-word-hover {
+      background: rgba(74, 108, 247, 0.35) !important;
+      box-shadow: 0 0 0 3px rgba(74, 108, 247, 0.2);
     }
+    .${PREFIX}x-sub-hint {
+      position: fixed;
+      z-index: 2147483647;
+      bottom: 40px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(74, 108, 247, 0.9);
+      color: #fff;
+      font-size: 12px;
+      padding: 6px 14px;
+      border-radius: 20px;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity .4s ease;
+      white-space: nowrap;
+    }
+    .${PREFIX}x-sub-hint.visible {
+      opacity: 1;
+    }
+
   `;
     document.head.appendChild(style);
 
@@ -593,99 +620,32 @@
         if (isReading) cleanupReading();
     }
 
-    // ── Read-aloud with word highlighting ──────────────────────────
+    // ── Read-aloud with selection highlight ───────────────────────
+    let readingHighlightEl = null;
+
     function cleanupReading() {
         window.speechSynthesis.cancel();
         isReading = false;
-        // Remove word highlight spans, restore original text
-        document.querySelectorAll(`.${PREFIX}word-hl`).forEach((span) => {
-            const parent = span.parentNode;
+        // Remove highlight wrapper
+        if (readingHighlightEl) {
+            const parent = readingHighlightEl.parentNode;
             if (parent) {
-                parent.replaceChild(
-                    document.createTextNode(span.textContent),
-                    span,
-                );
+                while (readingHighlightEl.firstChild) {
+                    parent.insertBefore(
+                        readingHighlightEl.firstChild,
+                        readingHighlightEl,
+                    );
+                }
+                parent.removeChild(readingHighlightEl);
                 parent.normalize();
             }
-        });
+            readingHighlightEl = null;
+        }
         // Remove reading state from read button
         if (iconEl) {
             const rb = iconEl.querySelector(`.${PREFIX}tb-read`);
             if (rb) rb.classList.remove("reading");
         }
-    }
-
-    function getTextNodesInRange(range) {
-        const result = [];
-        const container = range.commonAncestorContainer;
-        const root =
-            container.nodeType === 3 ? container.parentNode : container;
-
-        if (
-            container.nodeType === 3 &&
-            range.startContainer === range.endContainer
-        ) {
-            result.push({
-                node: container,
-                start: range.startOffset,
-                end: range.endOffset,
-            });
-            return result;
-        }
-
-        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-        while (walker.nextNode()) {
-            const node = walker.currentNode;
-            try {
-                if (!range.intersectsNode(node)) continue;
-            } catch {
-                continue;
-            }
-            if (!node.textContent) continue;
-
-            let start = 0;
-            let end = node.textContent.length;
-            if (node === range.startContainer) start = range.startOffset;
-            if (node === range.endContainer) end = range.endOffset;
-            if (start < end) result.push({ node, start, end });
-        }
-        return result;
-    }
-
-    function wrapWordsInSelection(range) {
-        const textNodeInfos = getTextNodesInRange(range);
-        const wordSpans = [];
-
-        for (const { node, start, end } of textNodeInfos) {
-            const fullText = node.textContent;
-            const selectedText = fullText.substring(start, end);
-            if (!selectedText.trim()) continue;
-
-            const fragment = document.createDocumentFragment();
-            const before = fullText.substring(0, start);
-            const after = fullText.substring(end);
-
-            if (before) fragment.appendChild(document.createTextNode(before));
-
-            // Split into words and whitespace preserving order
-            const parts = selectedText.match(/\S+|\s+/g) || [];
-            for (const part of parts) {
-                if (/\S/.test(part)) {
-                    const span = document.createElement("span");
-                    span.className = `${PREFIX}word-hl`;
-                    span.textContent = part;
-                    fragment.appendChild(span);
-                    wordSpans.push(span);
-                } else {
-                    fragment.appendChild(document.createTextNode(part));
-                }
-            }
-
-            if (after) fragment.appendChild(document.createTextNode(after));
-
-            node.parentNode.replaceChild(fragment, node);
-        }
-        return wordSpans;
     }
 
     function onReadClick(e) {
@@ -698,10 +658,7 @@
             return;
         }
 
-        if (!currentText || !currentRange) return;
-
-        const text = currentText;
-        const range = currentRange;
+        if (!currentText) return;
 
         isReading = true;
         hideIcon();
@@ -712,11 +669,23 @@
             if (rb) rb.classList.add("reading");
         }
 
-        // Wrap words in highlight spans
-        const wordSpans = wrapWordsInSelection(range);
-        if (wordSpans.length === 0) {
+        const utterText = cleanTextForTTS(currentText);
+        if (!utterText) {
             cleanupReading();
             return;
+        }
+
+        // Wrap selection in a highlight element
+        try {
+            if (currentRange) {
+                const hlSpan = document.createElement("span");
+                hlSpan.className = `${PREFIX}reading-hl`;
+                currentRange.surroundContents(hlSpan);
+                readingHighlightEl = hlSpan;
+            }
+        } catch (_) {
+            // surroundContents can fail on partial selections spanning elements
+            readingHighlightEl = null;
         }
 
         // Detect language from page
@@ -725,157 +694,27 @@
 
         window.speechSynthesis.cancel();
 
-        // Build the utterance text from actual span contents to ensure charIndex matches
-        const utterText = cleanTextForTTS(
-            wordSpans.map((s) => s.textContent).join(" "),
-        );
-
-        // Build char offset map: for each word span, its start offset in utterText
-        const wordCharStarts = [];
-        let offset = 0;
-        for (let i = 0; i < wordSpans.length; i++) {
-            wordCharStarts.push(offset);
-            offset += wordSpans[i].textContent.length + 1; // +1 for the space
-        }
-
         const utter = new SpeechSynthesisUtterance(utterText);
         utter.lang = pageLang;
 
-        let currentWordIdx = -1;
-        let boundaryCount = 0;
-        let boundaryFired = false;
-        let fallbackRAF = null;
-        let speechStartTime = 0;
-        let totalChars = utterText.length;
-
-        function highlightWord(idx) {
-            if (idx < 0 || idx >= wordSpans.length) return;
-            if (idx === currentWordIdx) return;
-            currentWordIdx = idx;
-            for (let i = 0; i < wordSpans.length; i++) {
-                if (i === idx) {
-                    wordSpans[i].classList.add(`${PREFIX}word-active`);
-                } else {
-                    wordSpans[i].classList.remove(`${PREFIX}word-active`);
-                }
-            }
-            wordSpans[idx].scrollIntoView({
-                behavior: "smooth",
-                block: "nearest",
-                inline: "nearest",
-            });
-        }
-
-        // Fallback: use elapsed time to estimate which word is being spoken
-        function startFallbackLoop() {
-            if (boundaryFired) return;
-
-            // Self-calibrating: start with estimate, adjust if we detect drift
-            let charsPerSec = 19.2 * (utter.rate || 1);
-
-            function tick() {
-                if (!isReading || boundaryFired) return;
-                const elapsedSec = (performance.now() - speechStartTime) / 1000;
-                const estimatedCharPos = elapsedSec * charsPerSec;
-
-                // Find which word this position corresponds to
-                let idx = 0;
-                for (let i = 0; i < wordCharStarts.length; i++) {
-                    if (estimatedCharPos >= wordCharStarts[i]) {
-                        idx = i;
-                    } else {
-                        break;
-                    }
-                }
-                highlightWord(idx);
-                fallbackRAF = requestAnimationFrame(tick);
-            }
-
-            fallbackRAF = requestAnimationFrame(tick);
-        }
-
-        function stopFallbackLoop() {
-            if (fallbackRAF) {
-                cancelAnimationFrame(fallbackRAF);
-                fallbackRAF = null;
-            }
-        }
-
-        function configAndSpeak(rate, voice) {
-            utter.rate = rate;
-            if (voice) utter.voice = voice;
-
-            utter.onstart = () => {
-                speechStartTime = performance.now();
-                highlightWord(0);
-                // Start fallback; onboundary will cancel it if it works
-                setTimeout(() => {
-                    if (!boundaryFired) startFallbackLoop();
-                }, 200);
-            };
-
-            // Use sequential counting: each "word" boundary = next word
-            // Also calibrate fallback speed from real boundary data
-            utter.onboundary = (ev) => {
-                if (ev.name === "word") {
-                    if (!boundaryFired) {
-                        boundaryFired = true;
-                        stopFallbackLoop();
-                    }
-                    highlightWord(boundaryCount);
-                    boundaryCount++;
-                }
-                // Also handle "sentence" boundaries
-                if (ev.name === "sentence") {
-                    if (!boundaryFired) {
-                        boundaryFired = true;
-                        stopFallbackLoop();
-                    }
-                    // Find word index matching this charIndex
-                    const ci = ev.charIndex;
-                    for (let i = 0; i < wordCharStarts.length; i++) {
-                        if (
-                            wordCharStarts[i] <= ci &&
-                            (i + 1 >= wordCharStarts.length ||
-                                wordCharStarts[i + 1] > ci)
-                        ) {
-                            boundaryCount = i;
-                            highlightWord(i);
-                            boundaryCount = i + 1;
-                            break;
-                        }
-                    }
-                }
-            };
-
-            utter.onend = () => {
-                stopFallbackLoop();
-                setTimeout(cleanupReading, 400);
-            };
-            utter.onerror = () => {
-                stopFallbackLoop();
-                cleanupReading();
-            };
-
-            window.speechSynthesis.speak(utter);
-        }
+        utter.onend = () => cleanupReading();
+        utter.onerror = () => cleanupReading();
 
         if (chrome?.storage?.sync) {
             chrome.storage.sync.get(
                 { speechVoice: "", speechRate: 0.95 },
                 (data) => {
-                    let voice = null;
-                    if (data.speechVoice) {
-                        const voices = window.speechSynthesis.getVoices();
-                        voice =
-                            voices.find((v) => v.name === data.speechVoice) ||
-                            null;
-                    }
-                    configAndSpeak(data.speechRate, voice);
+                    utter.rate = data.speechRate;
+                    const voice = pickBestVoice(data.speechVoice, pageLang);
+                    if (voice) utter.voice = voice;
+                    window.speechSynthesis.speak(utter);
                 },
             );
         } else {
-            configAndSpeak(0.95, null);
+            const voice = pickBestVoice("", pageLang);
+            if (voice) utter.voice = voice;
+            utter.rate = 0.95;
+            window.speechSynthesis.speak(utter);
         }
     }
 
@@ -906,6 +745,50 @@
             .trim();
     }
 
+    // ── Pick best available voice ──────────────────────────────────
+    // Prefers: user-saved voice > natural/neural voices > Google voices
+    function pickBestVoice(savedVoiceName, lang) {
+        const voices = window.speechSynthesis.getVoices();
+        if (!voices.length) return null;
+
+        // If user explicitly saved a voice, use it
+        if (savedVoiceName) {
+            const exact = voices.find((v) => v.name === savedVoiceName);
+            if (exact) return exact;
+        }
+
+        // Determine base language code (e.g. "en" from "en-US")
+        const baseLang = (lang || "en").split("-")[0].toLowerCase();
+
+        // Filter voices matching the language
+        const langVoices = voices.filter((v) =>
+            v.lang.toLowerCase().startsWith(baseLang),
+        );
+        if (!langVoices.length) return null;
+
+        // Priority patterns for natural/realistic voices (ordered best→worst)
+        const naturalPatterns = [
+            /microsoft\s+(aria|jenny).*natural/i,
+            /microsoft\s+(aria|jenny)/i,
+            /natural/i,
+            /neural/i,
+            /online/i,
+            /enhanced/i,
+            /premium/i,
+            /microsoft.*(guy|ana|christopher|eric|michelle|steffan)/i,
+            /google\s+u[sk]/i,
+            /google/i,
+        ];
+
+        for (const pattern of naturalPatterns) {
+            const match = langVoices.find((v) => pattern.test(v.name));
+            if (match) return match;
+        }
+
+        // Fallback: any non-local (remote) voice, or just the first one
+        return langVoices.find((v) => !v.localService) || langVoices[0];
+    }
+
     // ── TTS (Web Speech API) ───────────────────────────────────────
     function speak(text, lang) {
         window.speechSynthesis.cancel();
@@ -919,18 +802,15 @@
                     { speechVoice: "", speechRate: 0.95 },
                     (data) => {
                         utter.rate = data.speechRate;
-                        if (data.speechVoice) {
-                            const voices = window.speechSynthesis.getVoices();
-                            const match = voices.find(
-                                (v) => v.name === data.speechVoice,
-                            );
-                            if (match) utter.voice = match;
-                        }
+                        const voice = pickBestVoice(data.speechVoice, lang);
+                        if (voice) utter.voice = voice;
                         window.speechSynthesis.speak(utter);
                         resolve(utter);
                     },
                 );
             } else {
+                const voice = pickBestVoice("", lang);
+                if (voice) utter.voice = voice;
                 utter.rate = 0.95;
                 window.speechSynthesis.speak(utter);
                 resolve(utter);
@@ -2328,7 +2208,7 @@
     }
 
     // ══════════════════════════════════════════════════════════════
-    // ── X.com (Twitter) – TTS button on every post/reply ──────────
+    // ── X.com (Twitter) – Hover/Click word translate (like YT) ────
     // ══════════════════════════════════════════════════════════════
 
     const isX = /^(x\.com|twitter\.com)$/.test(window.location.hostname);
@@ -2336,100 +2216,204 @@
     if (isX) {
         const X_SPEAK_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>`;
 
+        let xHintEl = null;
+        let xHintTimer = null;
         let xCurrentSpeakingBtn = null;
-        let xWordSpans = [];
-        let xCurrentWordIdx = -1;
-        let xFallbackRAF = null;
 
-        // Wrap tweet text nodes into per-word highlight spans
-        function xWrapWordsInTweet(article) {
-            const textEl = article.querySelector('[data-testid="tweetText"]');
-            if (!textEl) return [];
-            const spans = [];
-            const walker = document.createTreeWalker(
-                textEl,
-                NodeFilter.SHOW_TEXT,
-            );
-            const textNodes = [];
-            while (walker.nextNode()) textNodes.push(walker.currentNode);
-            for (const node of textNodes) {
-                const text = node.textContent;
-                if (!text.trim()) continue;
-                const frag = document.createDocumentFragment();
-                const parts = text.match(/\S+|\s+/g) || [];
-                for (const part of parts) {
-                    if (/\S/.test(part)) {
-                        const sp = document.createElement("span");
-                        sp.className = `${PREFIX}x-word-hl`;
-                        sp.textContent = part;
-                        frag.appendChild(sp);
-                        spans.push(sp);
-                    } else {
-                        frag.appendChild(document.createTextNode(part));
-                    }
-                }
-                node.parentNode.replaceChild(frag, node);
+        function showXHint(msg) {
+            if (!xHintEl) {
+                xHintEl = document.createElement("div");
+                xHintEl.className = `${PREFIX}x-sub-hint`;
+                document.body.appendChild(xHintEl);
             }
-            return spans;
+            xHintEl.textContent = msg;
+            xHintEl.classList.add("visible");
+            clearTimeout(xHintTimer);
+            xHintTimer = setTimeout(() => {
+                xHintEl.classList.remove("visible");
+            }, 4000);
         }
 
-        // Remove word highlight spans, restore original text
-        function xUnwrapWords(article) {
-            if (!article) return;
-            article.querySelectorAll(`.${PREFIX}x-word-hl`).forEach((sp) => {
-                const parent = sp.parentNode;
-                if (parent) {
-                    parent.replaceChild(
-                        document.createTextNode(sp.textContent),
-                        sp,
-                    );
-                    parent.normalize();
-                }
-            });
-            xWordSpans = [];
-            xCurrentWordIdx = -1;
-        }
+        // Translation cache
+        let xTranslateCache = new Map();
+        let xHoverTimer = null;
+        let xIsHovering = false;
+        let xClickLocked = false;
 
-        function xHighlightWord(idx) {
-            if (idx < 0 || idx >= xWordSpans.length) return;
-            if (idx === xCurrentWordIdx) return;
-            xCurrentWordIdx = idx;
-            for (let i = 0; i < xWordSpans.length; i++) {
-                if (i === idx) {
-                    xWordSpans[i].classList.add(`${PREFIX}x-word-active`);
-                } else {
-                    xWordSpans[i].classList.remove(`${PREFIX}x-word-active`);
-                }
+        // Dismiss click-locked tooltip
+        function dismissXClick() {
+            if (!xClickLocked) return;
+            xClickLocked = false;
+            hideTooltip();
+        }
+        // Hook into global dismiss
+        const origDismissFnX = ytDismissClickFn;
+        ytDismissClickFn = () => {
+            if (origDismissFnX) origDismissFnX();
+            dismissXClick();
+        };
+
+        async function xCachedTranslate(text, targetLang) {
+            const key = `${text}|${targetLang}`;
+            if (xTranslateCache.has(key)) return xTranslateCache.get(key);
+            const result = await googleTranslate(text, targetLang);
+            xTranslateCache.set(key, result);
+            if (xTranslateCache.size > 300) {
+                const first = xTranslateCache.keys().next().value;
+                xTranslateCache.delete(first);
             }
-            xWordSpans[idx].scrollIntoView({
-                behavior: "smooth",
-                block: "nearest",
-            });
+            return result;
         }
 
         // Get the full text content of a tweet article
         function getPostText(article) {
-            // The tweet text is inside [data-testid="tweetText"]
             const textEl = article.querySelector('[data-testid="tweetText"]');
             if (!textEl) return "";
             return textEl.innerText.trim();
         }
 
-        // Find the action bar (like, retweet, reply row) inside a tweet
-        function getActionBar(article) {
-            // X.com uses role="group" for the action buttons row
-            return article.querySelector('[role="group"]');
+        // Extract sentence from tweet text containing the given word
+        function xExtractSentence(fullText, word) {
+            const idx = fullText.lastIndexOf(word);
+            if (idx === -1) return fullText; // fallback: whole tweet
+            const sentenceEnders = /[.!?…\n]/;
+            let start = 0;
+            for (let i = idx - 1; i >= 0; i--) {
+                if (sentenceEnders.test(fullText[i])) {
+                    start = i + 1;
+                    break;
+                }
+            }
+            let end = fullText.length;
+            for (let i = idx + word.length; i < fullText.length; i++) {
+                if (sentenceEnders.test(fullText[i])) {
+                    end = i + 1;
+                    break;
+                }
+            }
+            const sentence = fullText.substring(start, end).trim();
+            return sentence.length > word.length + 2 ? sentence : fullText;
         }
 
+        // Build tooltip HTML (same pattern as YouTube)
+        function buildXTooltipHtml(
+            srcLang,
+            targetLang,
+            original,
+            translated,
+            fullLine,
+            fullTranslated,
+        ) {
+            let fullLineHtml = "";
+            const cleanFullLine = fullLine ? stripBrackets(fullLine) : "";
+            const cleanFullTranslated = fullTranslated
+                ? stripBrackets(fullTranslated)
+                : "";
+            if (fullLine && fullTranslated && cleanFullLine) {
+                fullLineHtml = `
+                    <div class="${PREFIX}row" style="margin-top:6px; padding-top:8px; border-top:1px solid rgba(255,255,255,0.1);">
+                        <span class="${PREFIX}label">ALL</span>
+                        <span class="${PREFIX}text ${PREFIX}original" style="font-size:12px;">${escapeHtml(cleanFullLine)}</span>
+                        <button class="${PREFIX}speak" data-text="${escapeAttr(cleanFullLine)}" data-lang="${escapeAttr(srcLang)}" title="Odczytaj zdanie">${SVG_SPEAKER}</button>
+                    </div>
+                    <div class="${PREFIX}row">
+                        <span class="${PREFIX}label"></span>
+                        <span class="${PREFIX}text ${PREFIX}translated" style="font-size:12px;">${escapeHtml(cleanFullTranslated)}</span>
+                        <button class="${PREFIX}speak" data-text="${escapeAttr(cleanFullTranslated)}" data-lang="${escapeAttr(targetLang)}" title="Odczytaj tłumaczenie zdania">${SVG_SPEAKER}</button>
+                    </div>`;
+            }
+            const saveSentenceBtn = cleanFullLine
+                ? `<button class="${PREFIX}save-sentence-btn" data-src="${escapeAttr(original)}" data-translated="${escapeAttr(translated)}" data-src-lang="${escapeAttr(srcLang)}" data-tgt-lang="${escapeAttr(targetLang)}" data-sentence="${escapeAttr(cleanFullLine)}" data-sentence-translated="${escapeAttr(cleanFullTranslated)}" title="Zapisz zdanie">${SVG_SAVE_SENTENCE}</button>`
+                : "";
+            return `
+                <div class="${PREFIX}header">
+                    <span>${langTag(srcLang)} → ${langTag(targetLang)}</span>
+                    <div style="display:flex;align-items:center;">
+                        <button class="${PREFIX}save-btn" data-src="${escapeAttr(original)}" data-translated="${escapeAttr(translated)}" data-src-lang="${escapeAttr(srcLang)}" data-tgt-lang="${escapeAttr(targetLang)}" title="Zapisz słowo">${SVG_SAVE}</button>
+                        ${saveSentenceBtn}
+                    </div>
+                </div>
+                <div class="${PREFIX}body">
+                    <div class="${PREFIX}row">
+                        <span class="${PREFIX}label">${langTag(srcLang)}</span>
+                        <span class="${PREFIX}text ${PREFIX}original">${escapeHtml(original)}</span>
+                        <button class="${PREFIX}speak" data-text="${escapeAttr(original)}" data-lang="${escapeAttr(srcLang)}" title="Odczytaj oryginał">${SVG_SPEAKER}</button>
+                    </div>
+                    <div class="${PREFIX}row">
+                        <span class="${PREFIX}label">${langTag(targetLang)}</span>
+                        <span class="${PREFIX}text ${PREFIX}translated">${escapeHtml(translated)}</span>
+                        <button class="${PREFIX}speak" data-text="${escapeAttr(translated)}" data-lang="${escapeAttr(targetLang)}" title="Odczytaj tłumaczenie">${SVG_SPEAKER}</button>
+                    </div>
+                    ${fullLineHtml}
+                </div>`;
+        }
+
+        // Attach TTS + save handlers to tooltip buttons (same pattern as YT/NF)
+        function attachXTooltipHandlers() {
+            if (!tooltipEl) return;
+            tooltipEl.querySelectorAll(`.${PREFIX}speak`).forEach((btn) => {
+                btn.addEventListener("click", (ev) => {
+                    ev.stopPropagation();
+                    const t = btn.getAttribute("data-text");
+                    const l = btn.getAttribute("data-lang");
+                    btn.classList.add("speaking");
+                    speak(t, l).then((utter) => {
+                        utter.onend = () => btn.classList.remove("speaking");
+                        utter.onerror = () => btn.classList.remove("speaking");
+                    });
+                });
+            });
+            const saveBtn = tooltipEl.querySelector(`.${PREFIX}save-btn`);
+            if (saveBtn) {
+                saveBtn.addEventListener("click", (ev) => {
+                    ev.stopPropagation();
+                    saveWord({
+                        original: saveBtn.getAttribute("data-src"),
+                        translated: saveBtn.getAttribute("data-translated"),
+                        srcLang: saveBtn.getAttribute("data-src-lang"),
+                        tgtLang: saveBtn.getAttribute("data-tgt-lang"),
+                        sentence: "",
+                        sentenceTranslated: "",
+                        url: window.location.href,
+                        timestamp: Date.now(),
+                        downloaded: false,
+                    });
+                    saveBtn.innerHTML = SVG_SAVE_CHECK;
+                    saveBtn.classList.add("saved");
+                });
+            }
+            const saveSentenceBtn = tooltipEl.querySelector(
+                `.${PREFIX}save-sentence-btn`,
+            );
+            if (saveSentenceBtn) {
+                saveSentenceBtn.addEventListener("click", (ev) => {
+                    ev.stopPropagation();
+                    saveWord({
+                        original: saveSentenceBtn.getAttribute("data-src"),
+                        translated:
+                            saveSentenceBtn.getAttribute("data-translated"),
+                        srcLang: saveSentenceBtn.getAttribute("data-src-lang"),
+                        tgtLang: saveSentenceBtn.getAttribute("data-tgt-lang"),
+                        sentence:
+                            saveSentenceBtn.getAttribute("data-sentence") || "",
+                        sentenceTranslated:
+                            saveSentenceBtn.getAttribute(
+                                "data-sentence-translated",
+                            ) || "",
+                        url: window.location.href,
+                        timestamp: Date.now(),
+                        downloaded: false,
+                    });
+                    saveSentenceBtn.innerHTML = SVG_SAVE_SENTENCE_CHECK;
+                    saveSentenceBtn.classList.add("saved");
+                });
+            }
+        }
+
+        // ── TTS button in tweet header (keep from original) ──
         function stopXSpeaking() {
             window.speechSynthesis.cancel();
-            if (xFallbackRAF) {
-                cancelAnimationFrame(xFallbackRAF);
-                xFallbackRAF = null;
-            }
             if (xCurrentSpeakingBtn) {
-                const art = xCurrentSpeakingBtn.closest("article");
-                if (art) xUnwrapWords(art);
                 xCurrentSpeakingBtn.classList.remove(`${PREFIX}x-speaking`);
                 xCurrentSpeakingBtn = null;
             }
@@ -2438,150 +2422,59 @@
         function onXSpeakClick(e) {
             e.stopPropagation();
             e.preventDefault();
-
             const btn = e.currentTarget;
             const article = btn.closest("article");
             if (!article) return;
-
-            // If this button is already speaking, stop it
             if (btn.classList.contains(`${PREFIX}x-speaking`)) {
                 stopXSpeaking();
                 return;
             }
-
-            // Stop any other speaking button first
             stopXSpeaking();
-
             const text = getPostText(article);
             if (!text) return;
-
             btn.classList.add(`${PREFIX}x-speaking`);
             xCurrentSpeakingBtn = btn;
-
-            // Wrap tweet text into word spans for highlighting
-            xWordSpans = xWrapWordsInTweet(article);
-
-            // Build utterance from word spans to ensure charIndex alignment
-            const utterText = cleanTextForTTS(
-                xWordSpans.map((s) => s.textContent).join(" "),
-            );
-            const wordCharStarts = [];
-            let off = 0;
-            for (let i = 0; i < xWordSpans.length; i++) {
-                wordCharStarts.push(off);
-                off += xWordSpans[i].textContent.length + 1;
-            }
-
-            // Detect language from html lang or default to "en"
+            const utterText = cleanTextForTTS(text);
             const lang = document.documentElement.lang || "en";
-
             window.speechSynthesis.cancel();
             const utter = new SpeechSynthesisUtterance(utterText);
             utter.lang = lang;
-
-            let boundaryFired = false;
-            let boundaryCount = 0;
-            let speechStartTime = 0;
-
-            function startFallback() {
-                if (boundaryFired) return;
-                const charsPerSec = 19.2 * (utter.rate || 1);
-                function tick() {
-                    if (boundaryFired) return;
-                    const elapsed =
-                        (performance.now() - speechStartTime) / 1000;
-                    const charPos = elapsed * charsPerSec;
-                    let idx = 0;
-                    for (let i = 0; i < wordCharStarts.length; i++) {
-                        if (charPos >= wordCharStarts[i]) idx = i;
-                        else break;
-                    }
-                    xHighlightWord(idx);
-                    xFallbackRAF = requestAnimationFrame(tick);
-                }
-                xFallbackRAF = requestAnimationFrame(tick);
-            }
-
-            utter.onstart = () => {
-                speechStartTime = performance.now();
-                xHighlightWord(0);
-                setTimeout(() => {
-                    if (!boundaryFired) startFallback();
-                }, 200);
-            };
-
-            utter.onboundary = (ev) => {
-                if (ev.name === "word") {
-                    if (!boundaryFired) {
-                        boundaryFired = true;
-                        if (xFallbackRAF) {
-                            cancelAnimationFrame(xFallbackRAF);
-                            xFallbackRAF = null;
-                        }
-                    }
-                    xHighlightWord(boundaryCount);
-                    boundaryCount++;
-                }
-            };
-
             utter.onend = () => {
-                if (xFallbackRAF) {
-                    cancelAnimationFrame(xFallbackRAF);
-                    xFallbackRAF = null;
-                }
-                setTimeout(() => {
-                    xUnwrapWords(article);
-                    btn.classList.remove(`${PREFIX}x-speaking`);
-                    if (xCurrentSpeakingBtn === btn) xCurrentSpeakingBtn = null;
-                }, 300);
-            };
-            utter.onerror = () => {
-                if (xFallbackRAF) {
-                    cancelAnimationFrame(xFallbackRAF);
-                    xFallbackRAF = null;
-                }
-                xUnwrapWords(article);
                 btn.classList.remove(`${PREFIX}x-speaking`);
                 if (xCurrentSpeakingBtn === btn) xCurrentSpeakingBtn = null;
             };
-
-            // Apply user voice/rate settings
+            utter.onerror = () => {
+                btn.classList.remove(`${PREFIX}x-speaking`);
+                if (xCurrentSpeakingBtn === btn) xCurrentSpeakingBtn = null;
+            };
             if (chrome?.storage?.sync) {
                 chrome.storage.sync.get(
                     { speechVoice: "", speechRate: 0.95 },
                     (data) => {
                         utter.rate = data.speechRate;
-                        if (data.speechVoice) {
-                            const voices = window.speechSynthesis.getVoices();
-                            const match = voices.find(
-                                (v) => v.name === data.speechVoice,
-                            );
-                            if (match) utter.voice = match;
-                        }
+                        const voice = pickBestVoice(data.speechVoice, lang);
+                        if (voice) utter.voice = voice;
                         window.speechSynthesis.speak(utter);
                     },
                 );
             } else {
+                const voice = pickBestVoice("", lang);
+                if (voice) utter.voice = voice;
                 utter.rate = 0.95;
                 window.speechSynthesis.speak(utter);
             }
         }
 
-        // Inject speak button into tweet header (top-right, before Grok button)
+        // Inject speak button into tweet header
         function injectXSpeakButton(article) {
-            if (article.dataset[PREFIX + "xBound"]) return;
-            article.dataset[PREFIX + "xBound"] = "1";
-
-            // Only add if post has text
+            if (article.dataset[PREFIX + "xSpeak"]) return;
+            article.dataset[PREFIX + "xSpeak"] = "1";
             const text = getPostText(article);
             if (!text) return;
-
-            // Find the top-right header area with Grok/More buttons
             const grokBtn = article.querySelector(
                 '[aria-label="Grok actions"]',
             );
             const caretBtn = article.querySelector('[data-testid="caret"]');
-            // The container row that holds Grok + More buttons
             const headerActionsRow =
                 grokBtn?.closest(
                     '[class*="r-1awozwy"][class*="r-18u37iz"][class*="r-1cmwbt1"]',
@@ -2589,30 +2482,259 @@
                 caretBtn?.closest(
                     '[class*="r-1awozwy"][class*="r-18u37iz"][class*="r-1cmwbt1"]',
                 );
-
             if (!headerActionsRow) return;
-
             const btn = document.createElement("button");
             btn.className = `${PREFIX}x-speak-btn`;
             btn.title = "Czytaj na głos";
             btn.innerHTML = X_SPEAK_SVG;
             btn.addEventListener("click", onXSpeakClick);
-
-            // Wrap in a div matching X.com header button styling
             const wrapper = document.createElement("div");
             wrapper.style.display = "flex";
             wrapper.style.alignItems = "center";
             wrapper.style.marginRight = "4px";
             wrapper.appendChild(btn);
-
-            // Insert before the first child (before Grok button area)
             headerActionsRow.insertBefore(wrapper, headerActionsRow.firstChild);
         }
 
-        // Process all visible tweets
+        // ── Split tweet text into word spans ──
+        function xSplitTextIntoWords(textEl) {
+            if (textEl.dataset[PREFIX + "xWordBound"]) return;
+            textEl.dataset[PREFIX + "xWordBound"] = "1";
+
+            // Process all direct text nodes and inline elements
+            const walker = document.createTreeWalker(
+                textEl,
+                NodeFilter.SHOW_TEXT,
+                null,
+                false,
+            );
+            const textNodes = [];
+            while (walker.nextNode()) {
+                textNodes.push(walker.currentNode);
+            }
+
+            for (const textNode of textNodes) {
+                const text = textNode.textContent;
+                if (!text.trim()) continue;
+
+                // Skip text nodes inside links (hashtags, mentions, urls)
+                const parentTag = textNode.parentElement?.tagName;
+                const parentIsLink = textNode.parentElement?.closest("a");
+
+                const frag = document.createDocumentFragment();
+                const parts = text.match(/\S+|\s+/g) || [];
+                for (const part of parts) {
+                    if (/\S/.test(part)) {
+                        // If parent is a link, wrap inside link context
+                        if (parentIsLink) {
+                            // Still make it a word span but keep it within the link
+                            const wordSpan = document.createElement("span");
+                            wordSpan.className = `${PREFIX}x-word`;
+                            wordSpan.textContent = part;
+                            frag.appendChild(wordSpan);
+                        } else {
+                            const wordSpan = document.createElement("span");
+                            wordSpan.className = `${PREFIX}x-word`;
+                            wordSpan.textContent = part;
+                            frag.appendChild(wordSpan);
+                        }
+                    } else {
+                        frag.appendChild(document.createTextNode(part));
+                    }
+                }
+                textNode.parentNode.replaceChild(frag, textNode);
+            }
+        }
+
+        // ── Hover handler: translate single word ──
+        async function handleXWordHover(wordSpan) {
+            if (xClickLocked) return;
+
+            xIsHovering = true;
+            clearTimeout(xHoverTimer);
+
+            const word = wordSpan.textContent.trim();
+            if (!word || word.length > 60) return;
+
+            const rect = wordSpan.getBoundingClientRect();
+            currentText = word;
+            currentRect = rect;
+
+            xHoverTimer = setTimeout(async () => {
+                if (!xIsHovering) return;
+
+                showTooltip(
+                    `<div class="${PREFIX}loading"><div class="${PREFIX}spinner"></div> Tłumaczę…</div>`,
+                    rect,
+                );
+
+                try {
+                    const targetLang = await getTargetLang();
+                    const { translated, detectedLang } = await xCachedTranslate(
+                        word,
+                        targetLang,
+                    );
+                    const srcLang =
+                        typeof detectedLang === "string"
+                            ? detectedLang
+                            : "auto";
+
+                    if (!xIsHovering) return;
+
+                    const html = buildXTooltipHtml(
+                        srcLang,
+                        targetLang,
+                        word,
+                        translated,
+                        null,
+                        null,
+                    );
+                    showTooltip(html, rect);
+                    attachXTooltipHandlers();
+                } catch (err) {
+                    console.error("[Quick Translator – X hover]", err);
+                    showTooltip(
+                        `<div class="${PREFIX}error">⚠ ${escapeHtml(err.message)}</div>`,
+                        rect,
+                    );
+                }
+            }, 300);
+        }
+
+        function handleXWordLeave() {
+            xIsHovering = false;
+            clearTimeout(xHoverTimer);
+            if (xClickLocked) return;
+            setTimeout(() => {
+                if (
+                    !xIsHovering &&
+                    !xClickLocked &&
+                    !tooltipEl?.matches(":hover")
+                ) {
+                    hideTooltip();
+                }
+            }, 400);
+        }
+
+        // ── Click handler: translate word + full sentence (sticky) ──
+        async function handleXWordClick(wordSpan, e) {
+            e.stopPropagation();
+            e.preventDefault();
+            clearTimeout(xHoverTimer);
+
+            xClickLocked = true;
+
+            const clickedWord = wordSpan.textContent.trim();
+            if (!clickedWord) return;
+
+            // Get full tweet text from the article
+            const article = wordSpan.closest("article");
+            const fullText = article ? getPostText(article) : clickedWord;
+            const fullLine = xExtractSentence(fullText, clickedWord);
+
+            const rect = wordSpan.getBoundingClientRect();
+            currentText = clickedWord;
+            currentRect = rect;
+
+            // Show loading
+            showTooltip(
+                `<div class="${PREFIX}loading"><div class="${PREFIX}spinner"></div> Tłumaczę słowo i zdanie…</div>`,
+                rect,
+            );
+
+            try {
+                const targetLang = await getTargetLang();
+                const { translated: wordTranslated, detectedLang } =
+                    await xCachedTranslate(clickedWord, targetLang);
+                const srcLang =
+                    typeof detectedLang === "string" ? detectedLang : "auto";
+
+                // Speak the clicked word immediately
+                speak(clickedWord, srcLang);
+
+                // Translate full sentence
+                let fullTranslated = null;
+                const showFullLine = fullLine && fullLine !== clickedWord;
+                if (showFullLine) {
+                    const result = await xCachedTranslate(fullLine, targetLang);
+                    fullTranslated = result.translated;
+                }
+
+                const html = buildXTooltipHtml(
+                    srcLang,
+                    targetLang,
+                    clickedWord,
+                    wordTranslated,
+                    showFullLine ? fullLine : null,
+                    fullTranslated,
+                );
+
+                showTooltip(html, rect);
+                attachXTooltipHandlers();
+            } catch (err) {
+                console.error("[Quick Translator – X click]", err);
+                showTooltip(
+                    `<div class="${PREFIX}error">⚠ ${escapeHtml(err.message)}</div>`,
+                    rect,
+                );
+            }
+        }
+
+        // ── Event delegation on tweet text ──
+        let xLastHoveredWord = null;
+
+        document.addEventListener(
+            "mouseover",
+            (e) => {
+                const wordSpan = e.target.closest?.(`.${PREFIX}x-word`);
+                if (wordSpan && wordSpan !== xLastHoveredWord) {
+                    if (xLastHoveredWord) {
+                        xLastHoveredWord.classList.remove(
+                            `${PREFIX}x-word-hover`,
+                        );
+                    }
+                    xLastHoveredWord = wordSpan;
+                    wordSpan.classList.add(`${PREFIX}x-word-hover`);
+                    handleXWordHover(wordSpan);
+                }
+            },
+            true,
+        );
+
+        document.addEventListener(
+            "mouseout",
+            (e) => {
+                const wordSpan = e.target.closest?.(`.${PREFIX}x-word`);
+                if (wordSpan) {
+                    wordSpan.classList.remove(`${PREFIX}x-word-hover`);
+                    if (xLastHoveredWord === wordSpan) xLastHoveredWord = null;
+                    handleXWordLeave();
+                }
+            },
+            true,
+        );
+
+        document.addEventListener(
+            "click",
+            (e) => {
+                const wordSpan = e.target.closest?.(`.${PREFIX}x-word`);
+                if (wordSpan) {
+                    handleXWordClick(wordSpan, e);
+                }
+            },
+            true,
+        );
+
+        // ── Process tweets: inject TTS button + split text into words ──
         function processXPosts() {
             document.querySelectorAll("article").forEach((article) => {
                 injectXSpeakButton(article);
+                const textEl = article.querySelector(
+                    '[data-testid="tweetText"]',
+                );
+                if (textEl) {
+                    xSplitTextIntoWords(textEl);
+                }
             });
         }
 
@@ -2621,21 +2743,23 @@
             const observer = new MutationObserver(() => {
                 processXPosts();
             });
-
-            observer.observe(document.body, {
-                childList: true,
-                subtree: true,
-            });
-
-            // Process already visible tweets
+            observer.observe(document.body, { childList: true, subtree: true });
             processXPosts();
         }
 
         // Start observing
         if (document.readyState === "loading") {
-            document.addEventListener("DOMContentLoaded", observeXPosts);
+            document.addEventListener("DOMContentLoaded", () => {
+                observeXPosts();
+                showXHint(
+                    "Najedź na słowo = tłumaczenie · Kliknij = wymów + całe zdanie ✨",
+                );
+            });
         } else {
             observeXPosts();
+            showXHint(
+                "Najedź na słowo = tłumaczenie · Kliknij = wymów + całe zdanie ✨",
+            );
         }
 
         // X.com is a SPA – re-process on URL changes
@@ -2643,6 +2767,7 @@
         new MutationObserver(() => {
             if (location.href !== xLastUrl) {
                 xLastUrl = location.href;
+                xTranslateCache.clear();
                 setTimeout(processXPosts, 1000);
             }
         }).observe(document.body, { childList: true, subtree: true });
