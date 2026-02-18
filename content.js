@@ -269,15 +269,31 @@
     }
 
     /* ── Netflix CC subtitle click-to-translate ── */
+    /* Fix subtitle text wrapping — Netflix uses flex which prevents wrapping */
+    .player-timedtext-text-container {
+      text-align: center !important;
+    }
+    .player-timedtext-text-container > div {
+      display: block !important;
+      text-align: center !important;
+    }
+    .player-timedtext-text-container span {
+      display: inline !important;
+      white-space: normal !important;
+    }
     .player-timedtext-text-container span.${PREFIX}clickable {
       position: relative;
+      display: inline !important;
+      white-space: normal !important;
+      word-wrap: break-word !important;
     }
     .${PREFIX}nf-word {
       cursor: pointer !important;
       border-radius: 3px;
       transition: background .15s ease, box-shadow .15s ease;
-      display: inline;
+      display: inline !important;
       padding: 1px 2px;
+      white-space: normal !important;
     }
     .${PREFIX}nf-word.${PREFIX}nf-word-hover {
       background: rgba(74, 108, 247, 0.45) !important;
@@ -429,11 +445,27 @@
     }
 
     // ── Helpers: Tooltip ───────────────────────────────────────────
+    // Returns the best parent for overlay UI (tooltip, hint).
+    // In fullscreen the browser only renders children of the fullscreen element,
+    // so we must attach there; otherwise use document.body.
+    function getOverlayParent() {
+        const fs =
+            document.fullscreenElement || document.webkitFullscreenElement;
+        return fs || document.body;
+    }
+
     function getTooltip() {
-        if (tooltipEl) return tooltipEl;
+        if (tooltipEl) {
+            // Re-parent into fullscreen element if needed
+            const parent = getOverlayParent();
+            if (tooltipEl.parentElement !== parent) {
+                parent.appendChild(tooltipEl);
+            }
+            return tooltipEl;
+        }
         tooltipEl = document.createElement("div");
         tooltipEl.id = TOOLTIP_ID;
-        document.body.appendChild(tooltipEl);
+        getOverlayParent().appendChild(tooltipEl);
         return tooltipEl;
     }
 
@@ -442,35 +474,63 @@
         tip.innerHTML = html;
         tip.classList.remove("visible");
 
-        const scrollX = window.scrollX;
-        const scrollY = window.scrollY;
+        const inFullscreen = !!(
+            document.fullscreenElement || document.webkitFullscreenElement
+        );
         const gap = 10;
 
-        tip.style.left = "0px";
-        tip.style.top = "0px";
+        // In fullscreen use fixed positioning (no scroll offsets)
+        if (inFullscreen) {
+            tip.style.position = "fixed";
+            tip.style.left = "0px";
+            tip.style.top = "0px";
 
-        const tipRect = tip.getBoundingClientRect();
+            const tipRect = tip.getBoundingClientRect();
 
-        let left = rect.left + scrollX + (rect.width - tipRect.width) / 2;
-        let top = rect.top + scrollY - tipRect.height - gap;
+            let left = rect.left + (rect.width - tipRect.width) / 2;
+            let top = rect.top - tipRect.height - gap;
 
-        left = Math.max(
-            scrollX + 4,
-            Math.min(
-                left,
-                scrollX +
-                    document.documentElement.clientWidth -
-                    tipRect.width -
-                    4,
-            ),
-        );
+            left = Math.max(
+                4,
+                Math.min(left, window.innerWidth - tipRect.width - 4),
+            );
+            if (top < 4) {
+                top = rect.bottom + gap;
+            }
 
-        if (top < scrollY + 4) {
-            top = rect.bottom + scrollY + gap;
+            tip.style.left = `${left}px`;
+            tip.style.top = `${top}px`;
+        } else {
+            tip.style.position = "absolute";
+            const scrollX = window.scrollX;
+            const scrollY = window.scrollY;
+
+            tip.style.left = "0px";
+            tip.style.top = "0px";
+
+            const tipRect = tip.getBoundingClientRect();
+
+            let left = rect.left + scrollX + (rect.width - tipRect.width) / 2;
+            let top = rect.top + scrollY - tipRect.height - gap;
+
+            left = Math.max(
+                scrollX + 4,
+                Math.min(
+                    left,
+                    scrollX +
+                        document.documentElement.clientWidth -
+                        tipRect.width -
+                        4,
+                ),
+            );
+
+            if (top < scrollY + 4) {
+                top = rect.bottom + scrollY + gap;
+            }
+
+            tip.style.left = `${left}px`;
+            tip.style.top = `${top}px`;
         }
-
-        tip.style.left = `${left}px`;
-        tip.style.top = `${top}px`;
 
         requestAnimationFrame(() => tip.classList.add("visible"));
     }
@@ -1604,7 +1664,12 @@
             if (!nfHintEl) {
                 nfHintEl = document.createElement("div");
                 nfHintEl.className = `${PREFIX}nf-sub-hint`;
-                document.body.appendChild(nfHintEl);
+                getOverlayParent().appendChild(nfHintEl);
+            }
+            // Re-parent into fullscreen element if needed
+            const parent = getOverlayParent();
+            if (nfHintEl.parentElement !== parent) {
+                parent.appendChild(nfHintEl);
             }
             nfHintEl.textContent = msg;
             nfHintEl.classList.add("visible");
