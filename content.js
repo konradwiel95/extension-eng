@@ -390,6 +390,61 @@
       opacity: 1;
     }
 
+    /* ── X.com (Twitter) translate-post button ── */
+    .${PREFIX}x-translate-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 34px;
+      height: 34px;
+      border: none;
+      background: transparent;
+      color: #4a6cf7;
+      border-radius: 50%;
+      cursor: pointer;
+      transition: background .2s, color .2s;
+      padding: 0;
+      margin: 0;
+      vertical-align: middle;
+    }
+    .${PREFIX}x-translate-btn:hover {
+      background: rgba(74, 108, 247, 0.1);
+      color: #4a6cf7;
+    }
+    .${PREFIX}x-translate-btn.${PREFIX}x-translating {
+      color: #4a6cf7;
+      animation: ${PREFIX}x-pulse 1s ease-in-out infinite;
+    }
+    .${PREFIX}x-translate-btn.${PREFIX}x-translated-active {
+      color: #4ecdc4;
+    }
+
+    /* ── X.com inline translation block below tweet ── */
+    .${PREFIX}x-post-translation {
+      margin-top: 8px;
+      padding: 10px 14px;
+      border-radius: 12px;
+      background: rgba(74, 108, 247, 0.08);
+      border: 1px solid rgba(74, 108, 247, 0.15);
+      font-size: 14px;
+      line-height: 1.5;
+      color: rgb(113, 118, 123);
+      word-break: break-word;
+      animation: ${PREFIX}x-fade-in .25s ease;
+    }
+    .${PREFIX}x-post-translation .${PREFIX}x-trans-label {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .6px;
+      color: #4a6cf7;
+      margin-bottom: 4px;
+    }
+    @keyframes ${PREFIX}x-fade-in {
+      from { opacity: 0; transform: translateY(-4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
   `;
     document.head.appendChild(style);
 
@@ -2215,6 +2270,7 @@
 
     if (isX) {
         const X_SPEAK_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>`;
+        const X_TRANSLATE_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8l6 6"/><path d="M4 14l6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="M22 22l-5-10-5 10"/><path d="M14 18h6"/></svg>`;
 
         let xHintEl = null;
         let xHintTimer = null;
@@ -2465,7 +2521,65 @@
             }
         }
 
-        // Inject speak button into tweet header
+        // ── Translate post: show translation inline below tweet ──
+        async function onXTranslateClick(e) {
+            e.stopPropagation();
+            e.preventDefault();
+            const btn = e.currentTarget;
+            const article = btn.closest("article");
+            if (!article) return;
+
+            const textEl = article.querySelector('[data-testid="tweetText"]');
+            if (!textEl) return;
+
+            // Toggle off if already showing translation
+            const existing = textEl.parentElement.querySelector(
+                `.${PREFIX}x-post-translation`,
+            );
+            if (existing) {
+                existing.remove();
+                btn.classList.remove(`${PREFIX}x-translated-active`);
+                return;
+            }
+
+            const text = getPostText(article);
+            if (!text) return;
+
+            btn.classList.add(`${PREFIX}x-translating`);
+
+            try {
+                const targetLang = await getTargetLang();
+                const { translated, detectedLang } = await xCachedTranslate(
+                    text,
+                    targetLang,
+                );
+                const srcLang =
+                    typeof detectedLang === "string" ? detectedLang : "auto";
+
+                // Don't show if source and target are same
+                // (still show — user explicitly asked)
+
+                const translationDiv = document.createElement("div");
+                translationDiv.className = `${PREFIX}x-post-translation`;
+                translationDiv.innerHTML = `
+                    <div class="${PREFIX}x-trans-label">${langTag(srcLang)} → ${langTag(targetLang)}</div>
+                    <div>${escapeHtml(translated)}</div>`;
+
+                // Insert after the tweet text element
+                textEl.parentElement.insertBefore(
+                    translationDiv,
+                    textEl.nextSibling,
+                );
+
+                btn.classList.remove(`${PREFIX}x-translating`);
+                btn.classList.add(`${PREFIX}x-translated-active`);
+            } catch (err) {
+                console.error("[Quick Translator – X translate post]", err);
+                btn.classList.remove(`${PREFIX}x-translating`);
+            }
+        }
+
+        // Inject speak + translate buttons into tweet header
         function injectXSpeakButton(article) {
             if (article.dataset[PREFIX + "xSpeak"]) return;
             article.dataset[PREFIX + "xSpeak"] = "1";
@@ -2483,15 +2597,26 @@
                     '[class*="r-1awozwy"][class*="r-18u37iz"][class*="r-1cmwbt1"]',
                 );
             if (!headerActionsRow) return;
+
+            // Translate post button
+            const translateBtn = document.createElement("button");
+            translateBtn.className = `${PREFIX}x-translate-btn`;
+            translateBtn.title = "Przetłumacz posta";
+            translateBtn.innerHTML = X_TRANSLATE_SVG;
+            translateBtn.addEventListener("click", onXTranslateClick);
+
+            // Speak button
             const btn = document.createElement("button");
             btn.className = `${PREFIX}x-speak-btn`;
             btn.title = "Czytaj na głos";
             btn.innerHTML = X_SPEAK_SVG;
             btn.addEventListener("click", onXSpeakClick);
+
             const wrapper = document.createElement("div");
             wrapper.style.display = "flex";
             wrapper.style.alignItems = "center";
             wrapper.style.marginRight = "4px";
+            wrapper.appendChild(translateBtn);
             wrapper.appendChild(btn);
             headerActionsRow.insertBefore(wrapper, headerActionsRow.firstChild);
         }
