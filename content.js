@@ -363,7 +363,7 @@
       border-radius: 3px;
       transition: background .15s ease, box-shadow .15s ease;
       display: inline;
-      padding: 1px 2px;
+      padding: 1px 1px;
     }
     .${PREFIX}x-word:hover,
     .${PREFIX}x-word.${PREFIX}x-word-hover {
