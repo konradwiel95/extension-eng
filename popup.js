@@ -372,9 +372,14 @@ document.getElementById("exportAnki").addEventListener("click", async () => {
             }
 
             // One sound on back only: sentence audio if sentence exists, otherwise word audio
-            const audioFile = w.sentence
-                ? `sentence_${i}.mp3`
-                : `word_${i}.mp3`;
+            const audioText = w.sentence || w.original;
+            const slug = audioText
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, "_")
+                .replace(/^_|_$/g, "")
+                .substring(0, 40);
+            const ts = (w.timestamp || Date.now()).toString(36);
+            const audioFile = `qt_${slug}_${ts}.mp3`;
             backText += ` [sound:${audioFile}]`;
             lines.push(`${clozeText}\t${backText}`);
 
@@ -386,7 +391,7 @@ document.getElementById("exportAnki").addEventListener("click", async () => {
                     const audioData = new Uint8Array(
                         await sentenceBlob.arrayBuffer(),
                     );
-                    files.push({ name: `sentence_${i}.mp3`, data: audioData });
+                    files.push({ name: audioFile, data: audioData });
                 }
             } else {
                 const wordBlob = await fetchAudioBlob(w.original, ttsLang);
@@ -394,7 +399,7 @@ document.getElementById("exportAnki").addEventListener("click", async () => {
                     const audioData = new Uint8Array(
                         await wordBlob.arrayBuffer(),
                     );
-                    files.push({ name: `word_${i}.mp3`, data: audioData });
+                    files.push({ name: audioFile, data: audioData });
                 }
             }
         }
