@@ -788,6 +788,10 @@
 
     function cleanupReading() {
         window.speechSynthesis.cancel();
+        if (elAudioEl) {
+            elAudioEl.pause();
+            elAudioEl = null;
+        }
         isReading = false;
         // Remove highlight wrapper
         if (readingHighlightEl) {
@@ -855,30 +859,16 @@
         const pageLang =
             document.documentElement.lang || navigator.language || "en";
 
-        window.speechSynthesis.cancel();
-
-        const utter = new SpeechSynthesisUtterance(utterText);
-        utter.lang = pageLang;
-
-        utter.onend = () => cleanupReading();
-        utter.onerror = () => cleanupReading();
-
-        if (chrome?.storage?.sync) {
-            chrome.storage.sync.get(
-                { speechVoice: "", speechRate: 0.95 },
-                (data) => {
-                    utter.rate = data.speechRate;
-                    const voice = pickBestVoice(data.speechVoice, pageLang);
-                    if (voice) utter.voice = voice;
-                    window.speechSynthesis.speak(utter);
-                },
-            );
-        } else {
-            const voice = pickBestVoice("", pageLang);
-            if (voice) utter.voice = voice;
-            utter.rate = 0.95;
-            window.speechSynthesis.speak(utter);
-        }
+        speak(utterText, pageLang).then((result) => {
+            // If browser TTS (SpeechSynthesisUtterance), attach cleanup handlers
+            if (result && typeof result.onend !== "undefined") {
+                result.onend = () => cleanupReading();
+                result.onerror = () => cleanupReading();
+            } else if (result instanceof HTMLAudioElement) {
+                result.onended = () => cleanupReading();
+                result.onerror = () => cleanupReading();
+            }
+        });
     }
 
     // ── Google Translate (free, no key) ────────────────────────────
@@ -952,32 +942,100 @@
         return langVoices.find((v) => !v.localService) || langVoices[0];
     }
 
-    // ── TTS (Web Speech API) ───────────────────────────────────────
+    // ── ElevenLabs TTS ─────────────────────────────────────────────
+    let elAudioEl = null; // reusable <audio> element
+    async function speakElevenLabs(text, apiKey, voiceId) {
+        try {
+            const res = await fetch(
+                `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
+                {
+                    method: "POST",
+                    headers: {
+                        "xi-api-key": apiKey,
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({
+                        text: cleanTextForTTS(text),
+                        model_id: "eleven_multilingual_v2",
+                        voice_settings: {
+                            stability: 0.5,
+                            similarity_boost: 0.75,
+                        },
+                    }),
+                },
+            );
+            if (!res.ok) throw new Error(`ElevenLabs HTTP ${res.status}`);
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+            if (elAudioEl) {
+                elAudioEl.pause();
+                URL.revokeObjectURL(elAudioEl.src);
+            }
+            elAudioEl = new Audio(url);
+            elAudioEl.play();
+            return elAudioEl;
+        } catch (err) {
+            console.warn("[QuickTranslator] ElevenLabs TTS failed:", err);
+            return null;
+        }
+    }
+
+    // ── TTS (unified – Browser or ElevenLabs) ─────────────────────
     function speak(text, lang) {
         window.speechSynthesis.cancel();
-        const utter = new SpeechSynthesisUtterance(cleanTextForTTS(text));
-        utter.lang = lang;
+        if (elAudioEl) {
+            elAudioEl.pause();
+            elAudioEl = null;
+        }
 
-        // Apply stored voice/pitch/rate settings
         return new Promise((resolve) => {
-            if (chrome?.storage?.sync) {
-                chrome.storage.sync.get(
-                    { speechVoice: "", speechRate: 0.95 },
-                    (data) => {
-                        utter.rate = data.speechRate;
-                        const voice = pickBestVoice(data.speechVoice, lang);
-                        if (voice) utter.voice = voice;
-                        window.speechSynthesis.speak(utter);
-                        resolve(utter);
-                    },
+            if (!chrome?.storage?.sync) {
+                // Fallback: browser TTS without settings
+                const utter = new SpeechSynthesisUtterance(
+                    cleanTextForTTS(text),
                 );
-            } else {
+                utter.lang = lang;
                 const voice = pickBestVoice("", lang);
                 if (voice) utter.voice = voice;
                 utter.rate = 0.95;
                 window.speechSynthesis.speak(utter);
                 resolve(utter);
+                return;
             }
+
+            chrome.storage.sync.get(
+                {
+                    ttsMode: "browser",
+                    elApiKey: "",
+                    elVoiceId: "",
+                    speechVoice: "",
+                    speechRate: 0.95,
+                },
+                async (data) => {
+                    if (
+                        data.ttsMode === "elevenlabs" &&
+                        data.elApiKey &&
+                        data.elVoiceId
+                    ) {
+                        const audio = await speakElevenLabs(
+                            text,
+                            data.elApiKey,
+                            data.elVoiceId,
+                        );
+                        resolve(audio);
+                    } else {
+                        const utter = new SpeechSynthesisUtterance(
+                            cleanTextForTTS(text),
+                        );
+                        utter.lang = lang;
+                        utter.rate = data.speechRate;
+                        const voice = pickBestVoice(data.speechVoice, lang);
+                        if (voice) utter.voice = voice;
+                        window.speechSynthesis.speak(utter);
+                        resolve(utter);
+                    }
+                },
+            );
         });
     }
 
@@ -3127,6 +3185,10 @@
         // ── TTS button in tweet header (keep from original) ──
         function stopXSpeaking() {
             window.speechSynthesis.cancel();
+            if (elAudioEl) {
+                elAudioEl.pause();
+                elAudioEl = null;
+            }
             if (xCurrentSpeakingBtn) {
                 xCurrentSpeakingBtn.classList.remove(`${PREFIX}x-speaking`);
                 xCurrentSpeakingBtn = null;
@@ -3148,35 +3210,20 @@
             if (!text) return;
             btn.classList.add(`${PREFIX}x-speaking`);
             xCurrentSpeakingBtn = btn;
-            const utterText = cleanTextForTTS(text);
             const lang = document.documentElement.lang || "en";
-            window.speechSynthesis.cancel();
-            const utter = new SpeechSynthesisUtterance(utterText);
-            utter.lang = lang;
-            utter.onend = () => {
-                btn.classList.remove(`${PREFIX}x-speaking`);
-                if (xCurrentSpeakingBtn === btn) xCurrentSpeakingBtn = null;
-            };
-            utter.onerror = () => {
-                btn.classList.remove(`${PREFIX}x-speaking`);
-                if (xCurrentSpeakingBtn === btn) xCurrentSpeakingBtn = null;
-            };
-            if (chrome?.storage?.sync) {
-                chrome.storage.sync.get(
-                    { speechVoice: "", speechRate: 0.95 },
-                    (data) => {
-                        utter.rate = data.speechRate;
-                        const voice = pickBestVoice(data.speechVoice, lang);
-                        if (voice) utter.voice = voice;
-                        window.speechSynthesis.speak(utter);
-                    },
-                );
-            } else {
-                const voice = pickBestVoice("", lang);
-                if (voice) utter.voice = voice;
-                utter.rate = 0.95;
-                window.speechSynthesis.speak(utter);
-            }
+            speak(text, lang).then((result) => {
+                const onDone = () => {
+                    btn.classList.remove(`${PREFIX}x-speaking`);
+                    if (xCurrentSpeakingBtn === btn) xCurrentSpeakingBtn = null;
+                };
+                if (result && typeof result.onend !== "undefined") {
+                    result.onend = onDone;
+                    result.onerror = onDone;
+                } else if (result instanceof HTMLAudioElement) {
+                    result.onended = onDone;
+                    result.onerror = onDone;
+                }
+            });
         }
 
         // ── Translate post: show translation inline below tweet ──

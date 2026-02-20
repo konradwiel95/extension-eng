@@ -85,6 +85,93 @@ rateRange.addEventListener("change", () => {
     );
 });
 
+// ── TTS Mode toggle (Browser / ElevenLabs) ───────────────────────
+const modeBrowserBtn = document.getElementById("modeBrowser");
+const modeELBtn = document.getElementById("modeEL");
+const browserTtsSettings = document.getElementById("browserTtsSettings");
+const elSettingsPanel = document.getElementById("elSettings");
+const elApiKeyInput = document.getElementById("elApiKey");
+const elVoiceSelect = document.getElementById("elVoiceSelect");
+const elStatusEl = document.getElementById("elStatus");
+
+function setTtsMode(mode) {
+    if (mode === "elevenlabs") {
+        modeBrowserBtn.classList.remove("active");
+        modeELBtn.classList.add("active");
+        browserTtsSettings.style.display = "none";
+        elSettingsPanel.classList.add("visible");
+    } else {
+        modeELBtn.classList.remove("active");
+        modeBrowserBtn.classList.add("active");
+        browserTtsSettings.style.display = "";
+        elSettingsPanel.classList.remove("visible");
+    }
+    chrome.storage.sync.set({ ttsMode: mode }, flashSaved);
+}
+
+modeBrowserBtn.addEventListener("click", () => setTtsMode("browser"));
+modeELBtn.addEventListener("click", () => setTtsMode("elevenlabs"));
+
+// Load saved mode
+chrome.storage.sync.get(
+    { ttsMode: "browser", elApiKey: "", elVoiceId: "" },
+    (data) => {
+        if (data.ttsMode === "elevenlabs") setTtsMode("elevenlabs");
+        if (data.elApiKey) {
+            elApiKeyInput.value = data.elApiKey;
+            loadELVoices(data.elApiKey, data.elVoiceId);
+        }
+    },
+);
+
+// Save API key on change & load voices
+let elKeyDebounce = null;
+elApiKeyInput.addEventListener("input", () => {
+    clearTimeout(elKeyDebounce);
+    elKeyDebounce = setTimeout(() => {
+        const key = elApiKeyInput.value.trim();
+        chrome.storage.sync.set({ elApiKey: key }, flashSaved);
+        if (key) loadELVoices(key);
+    }, 600);
+});
+
+// Load ElevenLabs voices
+async function loadELVoices(apiKey, selectedVoiceId) {
+    elStatusEl.textContent = "Ładowanie głosów…";
+    elStatusEl.className = "el-status";
+    try {
+        const res = await fetch("https://api.elevenlabs.io/v1/voices", {
+            headers: { "xi-api-key": apiKey },
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const voices = data.voices || [];
+        elVoiceSelect.innerHTML = "";
+        voices.forEach((v) => {
+            const opt = document.createElement("option");
+            opt.value = v.voice_id;
+            const labels = v.labels ? Object.values(v.labels).join(", ") : "";
+            opt.textContent = `${v.name}${labels ? " (" + labels + ")" : ""}`;
+            if (v.voice_id === selectedVoiceId) opt.selected = true;
+            elVoiceSelect.appendChild(opt);
+        });
+        elStatusEl.textContent = `✓ Załadowano ${voices.length} głosów`;
+        elStatusEl.className = "el-status ok";
+        // Auto-select first if none selected
+        if (!selectedVoiceId && voices.length) {
+            chrome.storage.sync.set({ elVoiceId: voices[0].voice_id });
+        }
+    } catch (err) {
+        elStatusEl.textContent = `✗ Błąd: ${err.message}`;
+        elStatusEl.className = "el-status err";
+        elVoiceSelect.innerHTML = '<option value="">— Błąd API —</option>';
+    }
+}
+
+elVoiceSelect.addEventListener("change", () => {
+    chrome.storage.sync.set({ elVoiceId: elVoiceSelect.value }, flashSaved);
+});
+
 // ── Filter state ──────────────────────────────────────────────────
 let currentFilter = "all";
 

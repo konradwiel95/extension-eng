@@ -14,7 +14,7 @@
 
         body {
             width: 350px;
-            max-height: 540px;
+            max-height: 740px;
             font-family: 'Inter', -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
             background: linear-gradient(135deg, #0f0c29 0%, #1a1a3e 40%, #24243e 100%);
             color: #e0e0e0;
@@ -300,6 +300,120 @@
 
         .saved-msg.show {
             opacity: 1;
+        }
+
+        .settings input[type="text"],
+        .settings input[type="password"] {
+            width: 100%;
+            padding: 11px 14px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            color: #fff;
+            font-family: inherit;
+            font-size: 13px;
+            outline: none;
+            transition: all .2s ease;
+            box-sizing: border-box;
+        }
+
+        .settings input[type="text"]:hover,
+        .settings input[type="password"]:hover {
+            border-color: rgba(74, 108, 247, 0.4);
+            background-color: rgba(255, 255, 255, 0.08);
+        }
+
+        .settings input[type="text"]:focus,
+        .settings input[type="password"]:focus {
+            border-color: rgba(74, 108, 247, 0.5);
+            box-shadow: 0 0 0 3px rgba(74, 108, 247, 0.12);
+        }
+
+        .settings input[type="text"]::placeholder,
+        .settings input[type="password"]::placeholder {
+            color: rgba(255, 255, 255, 0.2);
+        }
+
+        .tts-mode-toggle {
+            display: flex;
+            gap: 6px;
+            margin-bottom: 10px;
+        }
+
+        .tts-mode-btn {
+            flex: 1;
+            padding: 8px 10px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.04);
+            color: rgba(255, 255, 255, 0.45);
+            font-family: inherit;
+            font-size: 11.5px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all .2s ease;
+            text-align: center;
+        }
+
+        .tts-mode-btn:hover {
+            background: rgba(255, 255, 255, 0.08);
+            color: rgba(255, 255, 255, 0.7);
+        }
+
+        .tts-mode-btn.active {
+            background: rgba(74, 108, 247, 0.2);
+            border-color: rgba(74, 108, 247, 0.4);
+            color: #6b8cff;
+        }
+
+        .el-settings {
+            display: none;
+            margin-top: 10px;
+        }
+
+        .el-settings.visible {
+            display: block;
+        }
+
+        .el-status {
+            font-size: 11px;
+            margin-top: 6px;
+            color: rgba(255, 255, 255, 0.3);
+        }
+
+        .el-status.ok {
+            color: #4ecdc4;
+        }
+
+        .el-status.err {
+            color: #ff6b6b;
+        }
+
+        .el-help {
+            margin-top: 8px;
+            padding: 10px 12px;
+            background: rgba(78, 205, 196, 0.06);
+            border: 1px solid rgba(78, 205, 196, 0.12);
+            border-radius: 10px;
+            font-size: 10.5px;
+            color: rgba(255, 255, 255, 0.4);
+            line-height: 1.6;
+        }
+
+        .el-help a {
+            color: #4ecdc4;
+            text-decoration: none;
+        }
+
+        .el-help a:hover {
+            text-decoration: underline;
+        }
+
+        .el-help ol {
+            margin: 4px 0 0 16px;
+            padding: 0;
         }
 
         .tip {
@@ -598,19 +712,55 @@
             </div>
 
             <div class="setting-group">
-                <label for="voiceSelect">Głos TTS</label>
-                <select id="voiceSelect">
-                    <option value="">🔊 Domyślny</option>
-                </select>
+                <label>Silnik głosu</label>
+                <div class="tts-mode-toggle">
+                    <button class="tts-mode-btn active" data-mode="browser" id="modeBrowser">🔊 Przeglądarka</button>
+                    <button class="tts-mode-btn" data-mode="elevenlabs" id="modeEL">🎙️ ElevenLabs</button>
+                </div>
             </div>
 
-            <div class="setting-group">
-                <label for="rateRange">Szybkość mowy</label>
-                <div class="glass-card">
-                    <div class="slider-row">
-                        <input type="range" id="rateRange" min="0.3" max="2" step="0.1" value="0.95">
-                        <span class="slider-value" id="rateValue">0.95</span>
+            <!-- Browser TTS settings -->
+            <div id="browserTtsSettings">
+                <div class="setting-group">
+                    <label for="voiceSelect">Głos TTS</label>
+                    <select id="voiceSelect">
+                        <option value="">🔊 Domyślny</option>
+                    </select>
+                </div>
+
+                <div class="setting-group">
+                    <label for="rateRange">Szybkość mowy</label>
+                    <div class="glass-card">
+                        <div class="slider-row">
+                            <input type="range" id="rateRange" min="0.3" max="2" step="0.1" value="0.95">
+                            <span class="slider-value" id="rateValue">0.95</span>
+                        </div>
                     </div>
+                </div>
+            </div>
+
+            <!-- ElevenLabs settings -->
+            <div id="elSettings" class="el-settings">
+                <div class="setting-group">
+                    <label for="elApiKey">API Key</label>
+                    <input type="password" id="elApiKey" placeholder="sk_xxxxxxxxxxxxxxxxxxxxxxxx">
+                </div>
+                <div class="setting-group">
+                    <label for="elVoiceSelect">Głos ElevenLabs</label>
+                    <select id="elVoiceSelect">
+                        <option value="">— Wpisz API key —</option>
+                    </select>
+                </div>
+                <div class="el-status" id="elStatus"></div>
+                <div class="el-help">
+                    📖 <strong>Jak zdobyć API key:</strong>
+                    <ol>
+                        <li>Zarejestruj się na <a href="https://elevenlabs.io" target="_blank">elevenlabs.io</a>
+                            (darmowy plan = 10 000 znaków/mies.)</li>
+                        <li>Kliknij ikonę profilu → <strong>Profile + API key</strong></li>
+                        <li>Kliknij <strong>Create API Key</strong> lub skopiuj istniejący</li>
+                        <li>Wklej klucz powyżej — głosy załadują się automatycznie</li>
+                    </ol>
                 </div>
             </div>
 
