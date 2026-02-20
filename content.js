@@ -538,31 +538,19 @@
       opacity: 1;
     }
 
-    /* ── Subtitle translation overlay (E key) ── */
-    #${PREFIX}sub-translate {
-      position: fixed;
-      z-index: 2147483647;
-      bottom: 120px;
-      left: 50%;
-      transform: translateX(-50%);
-      background: rgba(15, 15, 35, 0.88);
-      backdrop-filter: blur(16px) saturate(1.4);
-      -webkit-backdrop-filter: blur(16px) saturate(1.4);
-      color: #4ecdc4;
-      font: 600 15px/1.5 'Inter', -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      padding: 8px 22px;
-      border-radius: 12px;
-      border: 1px solid rgba(78, 205, 196, 0.2);
-      box-shadow: 0 8px 32px rgba(0,0,0,0.4);
-      pointer-events: none;
-      opacity: 0;
-      transition: opacity .25s ease;
-      white-space: pre-wrap;
-      text-align: center;
-      max-width: 80vw;
+    /* ── Subtitle in-place translation (E key) ── */
+    .${PREFIX}sub-translated {
+      color: #4ecdc4 !important;
+      text-shadow: 0 0 8px rgba(78, 205, 196, 0.4) !important;
     }
-    #${PREFIX}sub-translate.visible {
-      opacity: 1;
+    .${PREFIX}sub-word {
+      display: inline;
+      opacity: 0;
+      animation: ${PREFIX}wordIn .25s ease forwards;
+    }
+    @keyframes ${PREFIX}wordIn {
+      from { opacity: 0; transform: translateY(4px); filter: blur(2px); }
+      to   { opacity: 1; transform: translateY(0);  filter: blur(0); }
     }
 
   `;
@@ -3687,45 +3675,69 @@
             return null;
         }
 
-        /** Get the correct parent for overlays (fullscreen-aware) */
-        function getOverlayParent() {
-            return (
-                document.fullscreenElement ||
-                document.webkitFullscreenElement ||
-                document.mozFullScreenElement ||
-                document.msFullscreenElement ||
-                document.body
+        /** State for E-key subtitle translation toggle */
+        let eTranslateActive = false;
+        let eOriginalContents = []; // [{el, html}]
+        let eWasPlaying = false;
+
+        /** Get all visible subtitle DOM elements */
+        function getSubtitleElements() {
+            // YouTube
+            let els = document.querySelectorAll(
+                ".ytp-caption-window-container .ytp-caption-segment",
             );
+            if (els.length > 0) return Array.from(els);
+            // Netflix
+            els = document.querySelectorAll(
+                ".player-timedtext-text-container span",
+            );
+            if (els.length > 0) return Array.from(els);
+            // video.js / LookMovie
+            els = document.querySelectorAll(".vjs-text-track-cue div");
+            if (els.length > 0)
+                return Array.from(els).filter(
+                    (d) => d.textContent.trim() && !d.querySelector("div"),
+                );
+            return [];
         }
 
-        /** Show / hide translated subtitle overlay */
-        let subTranslateTimer = null;
-        function showSubtitleTranslation(text) {
-            const id = PREFIX + "sub-translate";
-            let el = document.getElementById(id);
-            const parent = getOverlayParent();
-            // If element exists but is in wrong parent (e.g. toggled fullscreen), move it
-            if (el && el.parentElement !== parent) {
-                el.remove();
-                el = null;
-            }
-            if (!el) {
-                el = document.createElement("div");
-                el.id = id;
-                parent.appendChild(el);
-            }
-            el.textContent = text;
-            el.classList.add("visible");
-            clearTimeout(subTranslateTimer);
-            subTranslateTimer = setTimeout(
-                () => el.classList.remove("visible"),
-                4000,
-            );
+        /** Replace subtitle text with word-by-word animated translation */
+        function applyTranslation(translatedText) {
+            const subEls = getSubtitleElements();
+            if (subEls.length === 0) return;
+            // Save originals
+            eOriginalContents = subEls.map((el) => ({
+                el,
+                html: el.innerHTML,
+            }));
+            // Build word-by-word HTML
+            const words = translatedText.split(/\s+/);
+            const wordHTML = words
+                .map(
+                    (w, i) =>
+                        `<span class="${PREFIX}sub-word" style="animation-delay:${i * 0.07}s">${w}</span>`,
+                )
+                .join(" ");
+            // Put translated text into first subtitle element, clear others
+            subEls.forEach((el, idx) => {
+                el.classList.add(PREFIX + "sub-translated");
+                if (idx === 0) {
+                    el.innerHTML = wordHTML;
+                } else {
+                    el.innerHTML = "";
+                }
+            });
+            eTranslateActive = true;
         }
-        function hideSubtitleTranslation() {
-            const el = document.getElementById(PREFIX + "sub-translate");
-            if (el) el.classList.remove("visible");
-            clearTimeout(subTranslateTimer);
+
+        /** Restore original subtitle text */
+        function restoreOriginal() {
+            for (const { el, html } of eOriginalContents) {
+                el.classList.remove(PREFIX + "sub-translated");
+                el.innerHTML = html;
+            }
+            eOriginalContents = [];
+            eTranslateActive = false;
         }
 
         document.addEventListener(
@@ -3766,13 +3778,23 @@
                 e.preventDefault();
                 e.stopPropagation();
 
-                // ── E = translate current subtitle sentence ──
+                // ── E = toggle subtitle translation in-place ──
                 if (key === "e" || key === "E") {
+                    if (eTranslateActive) {
+                        // Second press: restore original + resume
+                        restoreOriginal();
+                        if (eWasPlaying) video.play();
+                        eWasPlaying = false;
+                        return;
+                    }
+                    // First press: pause + translate
                     const subText = getCurrentSubtitleText(video);
                     if (!subText) return;
+                    eWasPlaying = !video.paused;
+                    video.pause();
                     getTargetLang().then((targetLang) => {
                         googleTranslate(subText, targetLang).then((result) => {
-                            showSubtitleTranslation(result.translated);
+                            applyTranslation(result.translated);
                         });
                     });
                     return;
