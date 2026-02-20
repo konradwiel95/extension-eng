@@ -540,7 +540,7 @@
 
     /* ── Subtitle in-place translation (E key) ── */
     .${PREFIX}sub-translated {
-      color: #4ecdc4 !important;
+      color: #ffffff !important;
       text-shadow: 0 0 8px rgba(78, 205, 196, 0.4) !important;
     }
     .${PREFIX}sub-word {
