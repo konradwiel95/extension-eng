@@ -538,6 +538,33 @@
       opacity: 1;
     }
 
+    /* ── Subtitle translation overlay (E key) ── */
+    #${PREFIX}sub-translate {
+      position: fixed;
+      z-index: 2147483647;
+      bottom: 120px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(15, 15, 35, 0.88);
+      backdrop-filter: blur(16px) saturate(1.4);
+      -webkit-backdrop-filter: blur(16px) saturate(1.4);
+      color: #4ecdc4;
+      font: 600 15px/1.5 'Inter', -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      padding: 8px 22px;
+      border-radius: 12px;
+      border: 1px solid rgba(78, 205, 196, 0.2);
+      box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity .25s ease;
+      white-space: pre-wrap;
+      text-align: center;
+      max-width: 80vw;
+    }
+    #${PREFIX}sub-translate.visible {
+      opacity: 1;
+    }
+
   `;
     document.head.appendChild(style);
 
@@ -3540,4 +3567,282 @@
             }
         }).observe(document.body, { childList: true, subtree: true });
     }
+
+    // ══════════════════════════════════════════════════════════════
+    // ── Keyboard Subtitle/Sentence Navigation (all videos) ───────
+    // ══════════════════════════════════════════════════════════════
+    // A / ← = previous sentence
+    // D / → = next sentence
+    // W / ↑ = play/pause toggle
+    // S / ↓ = repeat current sentence
+    // E = show translation of current subtitle
+
+    (function setupSubtitleNavigation() {
+        const FALLBACK_SKIP = 5; // seconds to skip when no cues available
+
+        /** Find the most relevant <video> on the page */
+        function getActiveVideo() {
+            const videos = document.querySelectorAll("video");
+            if (videos.length === 0) return null;
+            if (videos.length === 1) return videos[0];
+            // Prefer a currently playing video
+            for (const v of videos) {
+                if (!v.paused && v.readyState >= 2) return v;
+            }
+            // Otherwise return the largest by area (most likely the main player)
+            let best = videos[0];
+            let bestArea = 0;
+            videos.forEach((v) => {
+                const area =
+                    v.videoWidth * v.videoHeight ||
+                    v.clientWidth * v.clientHeight;
+                if (area > bestArea) {
+                    bestArea = area;
+                    best = v;
+                }
+            });
+            return best;
+        }
+
+        /** Collect all cues from active/showing text tracks, sorted by startTime */
+        function getAllCues(video) {
+            if (!video || !video.textTracks) return [];
+            const cues = [];
+            for (let i = 0; i < video.textTracks.length; i++) {
+                const track = video.textTracks[i];
+                if (track.mode === "disabled") continue;
+                if (!track.cues) continue;
+                for (let j = 0; j < track.cues.length; j++) {
+                    cues.push(track.cues[j]);
+                }
+            }
+            // De-duplicate by startTime and sort
+            const seen = new Set();
+            const unique = cues.filter((c) => {
+                const key = `${c.startTime.toFixed(3)}-${c.endTime.toFixed(3)}`;
+                if (seen.has(key)) return false;
+                seen.add(key);
+                return true;
+            });
+            unique.sort((a, b) => a.startTime - b.startTime);
+            return unique;
+        }
+
+        /** Find the index of the cue at or just before currentTime */
+        function getCurrentCueIndex(cues, currentTime) {
+            let idx = 0;
+            for (let i = cues.length - 1; i >= 0; i--) {
+                if (currentTime >= cues[i].startTime - 0.05) {
+                    idx = i;
+                    break;
+                }
+            }
+            return idx;
+        }
+
+        /** Get the current on-screen subtitle text (from DOM or textTrack cues) */
+        function getCurrentSubtitleText(video) {
+            // 1. Try YouTube caption segments
+            const ytSegs = document.querySelectorAll(
+                ".ytp-caption-window-container .ytp-caption-segment",
+            );
+            if (ytSegs.length > 0) {
+                return Array.from(ytSegs)
+                    .map((s) => s.textContent.trim())
+                    .filter(Boolean)
+                    .join(" ");
+            }
+            // 2. Try Netflix subtitles
+            const nfSpans = document.querySelectorAll(
+                ".player-timedtext-text-container span",
+            );
+            if (nfSpans.length > 0) {
+                return Array.from(nfSpans)
+                    .map((s) => s.textContent.trim())
+                    .filter(Boolean)
+                    .join(" ");
+            }
+            // 3. Try video.js / LookMovie subtitles
+            const vjsCues = document.querySelectorAll(
+                ".vjs-text-track-cue div",
+            );
+            if (vjsCues.length > 0) {
+                return Array.from(vjsCues)
+                    .map((d) => d.textContent.trim())
+                    .filter(Boolean)
+                    .join(" ");
+            }
+            // 4. Fallback: active cue from textTracks API
+            if (video && video.textTracks) {
+                for (let i = 0; i < video.textTracks.length; i++) {
+                    const track = video.textTracks[i];
+                    if (track.mode === "disabled" || !track.activeCues)
+                        continue;
+                    for (let j = 0; j < track.activeCues.length; j++) {
+                        const text = track.activeCues[j].text;
+                        if (text && text.trim()) return text.trim();
+                    }
+                }
+            }
+            return null;
+        }
+
+        /** Get the correct parent for overlays (fullscreen-aware) */
+        function getOverlayParent() {
+            return (
+                document.fullscreenElement ||
+                document.webkitFullscreenElement ||
+                document.mozFullScreenElement ||
+                document.msFullscreenElement ||
+                document.body
+            );
+        }
+
+        /** Show / hide translated subtitle overlay */
+        let subTranslateTimer = null;
+        function showSubtitleTranslation(text) {
+            const id = PREFIX + "sub-translate";
+            let el = document.getElementById(id);
+            const parent = getOverlayParent();
+            // If element exists but is in wrong parent (e.g. toggled fullscreen), move it
+            if (el && el.parentElement !== parent) {
+                el.remove();
+                el = null;
+            }
+            if (!el) {
+                el = document.createElement("div");
+                el.id = id;
+                parent.appendChild(el);
+            }
+            el.textContent = text;
+            el.classList.add("visible");
+            clearTimeout(subTranslateTimer);
+            subTranslateTimer = setTimeout(
+                () => el.classList.remove("visible"),
+                4000,
+            );
+        }
+        function hideSubtitleTranslation() {
+            const el = document.getElementById(PREFIX + "sub-translate");
+            if (el) el.classList.remove("visible");
+            clearTimeout(subTranslateTimer);
+        }
+
+        document.addEventListener(
+            "keydown",
+            (e) => {
+                // Don't interfere with text inputs
+                const tag = e.target.tagName;
+                if (
+                    tag === "INPUT" ||
+                    tag === "TEXTAREA" ||
+                    tag === "SELECT" ||
+                    e.target.isContentEditable
+                )
+                    return;
+
+                const key = e.key;
+                const isNavKey =
+                    key === "a" ||
+                    key === "A" ||
+                    key === "ArrowLeft" ||
+                    key === "d" ||
+                    key === "D" ||
+                    key === "ArrowRight" ||
+                    key === "w" ||
+                    key === "W" ||
+                    key === "ArrowUp" ||
+                    key === "s" ||
+                    key === "S" ||
+                    key === "ArrowDown" ||
+                    key === "e" ||
+                    key === "E";
+
+                if (!isNavKey) return;
+
+                const video = getActiveVideo();
+                if (!video) return;
+
+                e.preventDefault();
+                e.stopPropagation();
+
+                // ── E = translate current subtitle sentence ──
+                if (key === "e" || key === "E") {
+                    const subText = getCurrentSubtitleText(video);
+                    if (!subText) return;
+                    getTargetLang().then((targetLang) => {
+                        googleTranslate(subText, targetLang).then((result) => {
+                            showSubtitleTranslation(result.translated);
+                        });
+                    });
+                    return;
+                }
+
+                const cues = getAllCues(video);
+                const hasCues = cues.length > 0;
+
+                // ── W / ArrowUp = toggle play/pause ──
+                if (key === "w" || key === "W" || key === "ArrowUp") {
+                    if (video.paused) {
+                        video.play();
+                    } else {
+                        video.pause();
+                    }
+                    return;
+                }
+
+                // ── S / ArrowDown = repeat current sentence ──
+                if (key === "s" || key === "S" || key === "ArrowDown") {
+                    if (hasCues) {
+                        const idx = getCurrentCueIndex(cues, video.currentTime);
+                        video.currentTime = cues[idx].startTime;
+                    } else {
+                        video.currentTime = Math.max(0, video.currentTime - 3);
+                    }
+                    if (video.paused) video.play();
+                    return;
+                }
+
+                // ── A / ArrowLeft = previous sentence ──
+                if (key === "a" || key === "A" || key === "ArrowLeft") {
+                    if (hasCues) {
+                        const idx = getCurrentCueIndex(cues, video.currentTime);
+                        if (
+                            video.currentTime - cues[idx].startTime > 1.5 &&
+                            idx >= 0
+                        ) {
+                            video.currentTime = cues[idx].startTime;
+                        } else {
+                            const prevIdx = Math.max(0, idx - 1);
+                            video.currentTime = cues[prevIdx].startTime;
+                        }
+                    } else {
+                        video.currentTime = Math.max(
+                            0,
+                            video.currentTime - FALLBACK_SKIP,
+                        );
+                    }
+                    if (video.paused) video.play();
+                    return;
+                }
+
+                // ── D / ArrowRight = next sentence ──
+                if (key === "d" || key === "D" || key === "ArrowRight") {
+                    if (hasCues) {
+                        const idx = getCurrentCueIndex(cues, video.currentTime);
+                        const nextIdx = Math.min(cues.length - 1, idx + 1);
+                        video.currentTime = cues[nextIdx].startTime;
+                    } else {
+                        video.currentTime = Math.min(
+                            video.duration || Infinity,
+                            video.currentTime + FALLBACK_SKIP,
+                        );
+                    }
+                    if (video.paused) video.play();
+                    return;
+                }
+            },
+            true, // capture phase – intercept before site's own handlers
+        );
+    })();
 })();
