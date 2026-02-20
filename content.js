@@ -3815,7 +3815,8 @@
                     key === "S" ||
                     key === "ArrowDown" ||
                     key === "e" ||
-                    key === "E";
+                    key === "E" ||
+                    key === "Enter";
 
                 if (!isNavKey) return;
 
@@ -3826,7 +3827,7 @@
                 e.stopPropagation();
 
                 // ── E = toggle subtitle translation in-place ──
-                if (key === "e" || key === "E") {
+                if (key === "e" || key === "E" || key === "Enter") {
                     if (eTranslateActive) {
                         // Second press: restore original + resume
                         restoreOriginal();
