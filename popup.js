@@ -348,8 +348,6 @@ document.getElementById("exportAnki").addEventListener("click", async () => {
 
         for (let i = 0; i < words.length; i++) {
             const w = words[i];
-            const sentenceAudioFile = `sentence_${i}.mp3`;
-            const wordAudioFile = `word_${i}.mp3`;
 
             // Build Cloze text: sentence with the word as {{c1::word::translation}}
             let clozeText;
@@ -367,17 +365,20 @@ document.getElementById("exportAnki").addEventListener("click", async () => {
                 clozeText = `{{c1::${w.original}::${w.translated}}}`;
             }
 
-            // Back side: translation + sentence translation
+            // Back side: translation + sentence translation + audio
             let backText = w.translated;
             if (w.sentenceTranslated) {
                 backText += `<br><br><i>${w.sentenceTranslated}</i>`;
             }
 
-            // Two sound tags: sentence audio + word audio
-            const soundTags = `[sound:${sentenceAudioFile}] [sound:${wordAudioFile}]`;
-            lines.push(`${clozeText} ${soundTags}\t${backText}`);
+            // One sound on back only: sentence audio if sentence exists, otherwise word audio
+            const audioFile = w.sentence
+                ? `sentence_${i}.mp3`
+                : `word_${i}.mp3`;
+            backText += ` [sound:${audioFile}]`;
+            lines.push(`${clozeText}\t${backText}`);
 
-            // Fetch TTS audio for the full sentence
+            // Fetch TTS audio – only what we need
             const ttsLang = w.srcLang || "en";
             if (w.sentence) {
                 const sentenceBlob = await fetchAudioBlob(w.sentence, ttsLang);
@@ -385,15 +386,16 @@ document.getElementById("exportAnki").addEventListener("click", async () => {
                     const audioData = new Uint8Array(
                         await sentenceBlob.arrayBuffer(),
                     );
-                    files.push({ name: sentenceAudioFile, data: audioData });
+                    files.push({ name: `sentence_${i}.mp3`, data: audioData });
                 }
-            }
-
-            // Fetch TTS audio for just the word
-            const wordBlob = await fetchAudioBlob(w.original, ttsLang);
-            if (wordBlob) {
-                const audioData = new Uint8Array(await wordBlob.arrayBuffer());
-                files.push({ name: wordAudioFile, data: audioData });
+            } else {
+                const wordBlob = await fetchAudioBlob(w.original, ttsLang);
+                if (wordBlob) {
+                    const audioData = new Uint8Array(
+                        await wordBlob.arrayBuffer(),
+                    );
+                    files.push({ name: `word_${i}.mp3`, data: audioData });
+                }
             }
         }
 
