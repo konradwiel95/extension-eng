@@ -3835,16 +3835,63 @@
                         eWasPlaying = false;
                         return;
                     }
-                    // First press: pause + translate
-                    const subText = getCurrentSubtitleText(video);
-                    if (!subText) return;
+
+                    // Capture subtitle text IMMEDIATELY (before pause can remove DOM elements)
+                    const immediateText = getCurrentSubtitleText(video);
+                    const capturedTime = video.currentTime;
+
+                    // Pause video
                     eWasPlaying = !video.paused;
                     video.pause();
-                    getTargetLang().then((targetLang) => {
-                        googleTranslate(subText, targetLang).then((result) => {
-                            applyTranslation(result.translated);
+
+                    /** Find subtitle text by trying multiple strategies */
+                    function resolveSubtitleText() {
+                        // Strategy 1: text captured before pause (most reliable)
+                        if (immediateText) return immediateText;
+
+                        // Strategy 2: try DOM again after pause
+                        const postPauseText = getCurrentSubtitleText(video);
+                        if (postPauseText) return postPauseText;
+
+                        // Strategy 3: find cue from textTracks by captured timestamp
+                        const cues = getAllCues(video);
+                        if (cues.length > 0) {
+                            // Find a cue that contains the captured time
+                            for (const cue of cues) {
+                                if (
+                                    capturedTime >= cue.startTime - 0.1 &&
+                                    capturedTime <= cue.endTime + 0.1
+                                ) {
+                                    const t = cue.text?.trim();
+                                    if (t) return t;
+                                }
+                            }
+                            // Fallback: nearest cue before captured time
+                            const idx = getCurrentCueIndex(cues, capturedTime);
+                            const t = cues[idx]?.text?.trim();
+                            if (t) return t;
+                        }
+
+                        return null;
+                    }
+
+                    // Small delay so DOM/cues settle, then translate
+                    setTimeout(() => {
+                        const subText = resolveSubtitleText();
+                        if (!subText) {
+                            // No subtitle found – resume if was playing
+                            if (eWasPlaying) video.play();
+                            eWasPlaying = false;
+                            return;
+                        }
+                        getTargetLang().then((targetLang) => {
+                            googleTranslate(subText, targetLang).then(
+                                (result) => {
+                                    applyTranslation(result.translated);
+                                },
+                            );
                         });
-                    });
+                    }, 30);
                     return;
                 }
 
